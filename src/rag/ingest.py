@@ -12,7 +12,7 @@ import time
 DATA_PATH = "data/documents"
 DB_PATH = "data/chroma_db"
 MODEL_NAME = "llama3"
-
+BATCH_SIZE = 100
 
 def reset_db():
     print(f"Resetting database at {DB_PATH} (clearing collection 'langchain')...")
@@ -23,48 +23,80 @@ def reset_db():
     except Exception as e:
         print(f"Collection 'langchain' could not be deleted (might not exist): {e}")
 
+def load_file(file_path):
+    """Load a single file based on its extension."""
+    try:
+        if file_path.endswith(".txt"):
+            loader = TextLoader(file_path)
+        elif file_path.endswith(".pdf"):
+            loader = PyPDFLoader(file_path)
+        else:
+            return []
+        
+        return loader.load()
+    except Exception as e:
+        print(f"Error loading file {file_path}: {e}")
+        return []
+
 def ingest_docs(clear_db=False):
     if clear_db:
         reset_db()
 
-    print(f"Loading documents from {DATA_PATH}...")
-    # Load all .txt files
-    txt_loader = DirectoryLoader(DATA_PATH, glob="*.txt", loader_cls=TextLoader)
-    txt_documents = txt_loader.load()
-
-    # Load all .pdf files
-    pdf_loader = DirectoryLoader(DATA_PATH, glob="*.pdf", loader_cls=PyPDFLoader)
-    pdf_documents = pdf_loader.load()
-
-    documents = txt_documents + pdf_documents
+    print(f"Scanning documents in {DATA_PATH}...")
     
-    if not documents:
-        print("No documents found.")
+    all_documents = []
+    
+    if not os.path.exists(DATA_PATH):
+        print(f"Directory {DATA_PATH} does not exist.")
         return
 
-    print(f"Loaded {len(documents)} documents:")
-    for d in documents:
-        print(d.metadata.get('source', 'Unknown'))
+    # Iterate over files in the directory
+    for root, _, files in os.walk(DATA_PATH):
+        for file in files:
+            file_path = os.path.join(root, file)
+            if file.endswith((".txt", ".pdf")):
+                print(f"Loading {file}...")
+                docs = load_file(file_path)
+                if docs:
+                    all_documents.extend(docs)
+                    print(f"  Loaded {len(docs)} document(s) from {file}")
+                else:
+                    print(f"  Skipped {file} (empty or error)")
+
+    if not all_documents:
+        print("No documents found/loaded.")
+        return
+
+    print(f"Total loaded documents: {len(all_documents)}")
 
     # Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = text_splitter.split_documents(documents)
+    chunks = text_splitter.split_documents(all_documents)
     print(f"Split into {len(chunks)} chunks.")
 
     # Create Embeddings & Store in Chroma
-    print("Creating embeddings and storing in ChromaDB...")
+    print("Initializing ChromaDB and embeddings...")
     embedding_function = OllamaEmbeddings(model=MODEL_NAME)
     
-    # Initialize and persist ChromaDB
-    # We use the same 'langchain' collection name implicitly
-    db = Chroma.from_documents(
-        documents=chunks, 
-        embedding=embedding_function, 
+    # Initialize Chroma client
+    db = Chroma(
         persist_directory=DB_PATH,
-        collection_name="langchain" 
+        embedding_function=embedding_function,
+        collection_name="langchain"
     )
+
+    print(f"Inserting chunks into ChromaDB in batches of {BATCH_SIZE}...")
     
-    print(f"Successfully ingested {len(documents)} documents into {DB_PATH}.")
+    total_chunks = len(chunks)
+    for i in range(0, total_chunks, BATCH_SIZE):
+        batch = chunks[i : i + BATCH_SIZE]
+        print(f"  Processing batch {i//BATCH_SIZE + 1}/{(total_chunks + BATCH_SIZE - 1)//BATCH_SIZE} ({len(batch)} chunks)...")
+        try:
+            db.add_documents(batch)
+        except Exception as e:
+            print(f"  Error inserting batch {i}: {e}")
+            
+    print(f"Successfully ingested {len(all_documents)} documents ({len(chunks)} chunks) into {DB_PATH}.")
 
 if __name__ == "__main__":
     ingest_docs(clear_db=True)
