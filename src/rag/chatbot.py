@@ -7,7 +7,7 @@ from langchain_classic.chains.retrieval import create_retrieval_chain
 
 # Configuration
 DB_PATH = "data/chroma_db"
-MODEL_NAME = "llama3.3"
+MODEL_NAME = "llama3"
 
 def get_rag_chain():
     # 1. Initialize Embeddings & Vector Store

@@ -1,0 +1,13 @@
+langchain
+langchain-ollama
+langchain-community
+langchain-chroma
+chromadb
+ollama
+pypdf
+fastapi
+uvicorn
+python-multipart
+requests
+python-dotenv
+watchdog

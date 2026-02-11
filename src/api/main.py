@@ -1,6 +1,10 @@
+
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 from src.rag.chatbot import ask_question
+from src.rag.ingest import DATA_PATH
+from src.rag.watcher import start_watcher
 from src.api.whatsapp import router as whatsapp_router
 from src.api.instagram import router as instagram_router
 from dotenv import load_dotenv
@@ -14,7 +18,33 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="RAG Chatbot")
+# Global Observer
+observer = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info(f"Starting document watcher on {DATA_PATH}...")
+    global observer
+    try:
+        # Ensure path exists, absolute path
+        abs_path = os.path.abspath(DATA_PATH)
+        if not os.path.exists(abs_path):
+             os.makedirs(abs_path)
+             
+        observer = start_watcher(abs_path)
+    except Exception as e:
+        logger.error(f"Failed to start watcher: {e}")
+        
+    yield
+    
+    # Shutdown
+    if observer:
+        logger.info("Stopping document watcher...")
+        observer.stop()
+        observer.join()
+
+app = FastAPI(title="RAG Chatbot", lifespan=lifespan)
 
 # Include Routers
 app.include_router(whatsapp_router)

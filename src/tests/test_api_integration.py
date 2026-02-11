@@ -62,14 +62,6 @@ def test_whatsapp_message_handling(mock_post, mock_ask):
 
     response = client.post("/whatsapp/webhook", json=payload)
     assert response.status_code == 200
-    
-    # Since it's a background task, we might not see the side effects immediately 
-    # unless we force or mock them carefully. 
-    # But checking 200 means the endpoint accepted it.
-    
-    # To properly test logic inside background task with TestClient is tricky without more complex setup,
-    # but let's assume if 200 is returned, the structure was accepted.
-    # We can check logs if we ran it for real.
 
 @patch("src.api.instagram.ask_question")
 @patch("src.api.instagram.requests.post")
@@ -89,18 +81,3 @@ def test_instagram_message_handling(mock_post, mock_ask):
 
     response = client.post("/instagram/webhook", json=payload)
     assert response.status_code == 200
-
-if __name__ == "__main__":
-    print("Running tests...")
-    try:
-        test_whatsapp_verification()
-        print("WA Verification: PASS")
-        test_instagram_verification()
-        print("IG Verification: PASS")
-        test_whatsapp_message_handling()
-        print("WA Message: PASS")
-        test_instagram_message_handling()
-        print("IG Message: PASS")
-        print("All tests passed!")
-    except Exception as e:
-        print(f"Test failed: {e}")
