@@ -10,7 +10,7 @@ MODEL_NAME = "llama3.1"
 # ── Vector store ──────────────────────────────────────────────────────────────
 DB_PATH    = "data/chroma_db"
 DATA_PATH  = "data/documents"
-COLLECTION = "metadata_espazo_nature_512"
+COLLECTION = "metadata_espazo_nature_1024"
 
 # ── Retrieval pipeline ────────────────────────────────────────────────────────
 HYBRID_K = 20  # candidates fetched from each index (dense + sparse) before RRF

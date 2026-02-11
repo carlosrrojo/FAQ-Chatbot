@@ -8,8 +8,8 @@ from src.rag.processor import parse_doc, get_siblings
 from src.rag.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
 # from processor import add_metadata_keyBERT
 
-CHUNK_SIZE      = 512
-CHUNK_OVERLAP   = 128
+CHUNK_SIZE      = 1024
+CHUNK_OVERLAP   = 256
 
 # 1. Load each PDF and split into sections using headings
 docs: list[Document] = []
@@ -42,10 +42,11 @@ print(f"Added extra metadata to documents. Current chunks: {len(chunks)}")
 # 4. Embed and persist to vector store
 embeddings = OllamaEmbeddings(model=MODEL_NAME)
 vectorstore = Chroma(
-    collection_name=COLLECTION + "_" + str(CHUNK_SIZE) + "_" + str(CHUNK_OVERLAP),
+    collection_name=COLLECTION,
     embedding_function=embeddings,
     persist_directory=DB_PATH,
 )
 
+print(f"ingested to: {COLLECTION} in {DB_PATH}")
 document_ids = vectorstore.add_documents(chunks)
-print(f"Stored {len(document_ids)} documents using 800/100 split.")
+print(f"Stored {len(document_ids)} documents using {CHUNK_SIZE}/{CHUNK_OVERLAP} split.")
