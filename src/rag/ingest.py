@@ -1,12 +1,13 @@
 import os
-from langchain_community.document_loaders import TextLoader, DirectoryLoader, PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
-from langchain_community.embeddings import OllamaEmbeddings
-
-import chromadb
 import time
-
+from langchain_community.document_loaders import TextLoader, DirectoryLoader, PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_core.documents import Document
+from langchain_core.prompts import ChatPromptTemplate
+import chromadb
 
 # Configuration
 DATA_PATH = "data/documents"
