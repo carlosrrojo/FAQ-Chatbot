@@ -24,6 +24,7 @@ def reset_db():
     except Exception as e:
         print(f"Collection 'langchain' could not be deleted (might not exist): {e}")
 
+<<<<<<< HEAD
 def load_file(file_path):
     """Load a single file based on its extension."""
     try:
@@ -38,10 +39,20 @@ def load_file(file_path):
     except Exception as e:
         print(f"Error loading file {file_path}: {e}")
         return []
+=======
+def extract_metadata(content: str, llm: ChatOllama) -> dict:
+    pass
+>>>>>>> cf23103 (Implementing RAG from scrach)
 
 def ingest_docs(clear_db=False):
-    if clear_db:
-        reset_db()
+    embeddings = OllamaEmbeddings(model=MODEL_NAME)
+    vector_store = Chroma(
+        collection_name="espazo_nature",
+        embedding_function=embeddings,
+        persist_directory=DB_PATH
+    )
+    # Loading docs
+    loader = PyPDFLoader(os.path.join(DATA_PATH, "INFORMACIÓN PARA EL BOT.pdf")) # Hardcoded for now
 
     print(f"Scanning documents in {DATA_PATH}...")
     
