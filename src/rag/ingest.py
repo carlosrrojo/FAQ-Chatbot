@@ -9,42 +9,30 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import chromadb
 
+
 # Configuration
 DATA_PATH = "data/documents"
 DB_PATH = "data/chroma_db"
-MODEL_NAME = "llama3"
-BATCH_SIZE = 100
+MODEL_NAME = "llama3.1"
+COLLECTION_NAME = "espazo_nature"
 
+
+# Reset database - Erases the collection
 def reset_db():
-    print(f"Resetting database at {DB_PATH} (clearing collection 'langchain')...")
+    print(f"Resetting database at {DB_PATH} (clearing collection '{COLLECTION_NAME}')...")
     client = chromadb.PersistentClient(path=DB_PATH)
     try:
-        client.delete_collection("langchain")
-        print("Deleted existing collection 'langchain'")
+        client.delete_collection(COLLECTION_NAME)
+        print(f"Deleted existing collection '{COLLECTION_NAME}'")
     except Exception as e:
-        print(f"Collection 'langchain' could not be deleted (might not exist): {e}")
+        print(f"Collection '{COLLECTION_NAME}' could not be deleted (might not exist): {e}")
 
-<<<<<<< HEAD
-def load_file(file_path):
-    """Load a single file based on its extension."""
-    try:
-        if file_path.endswith(".txt"):
-            loader = TextLoader(file_path)
-        elif file_path.endswith(".pdf"):
-            loader = PyPDFLoader(file_path)
-        else:
-            return []
-        
-        return loader.load()
-    except Exception as e:
-        print(f"Error loading file {file_path}: {e}")
-        return []
-=======
 def extract_metadata(content: str, llm: ChatOllama) -> dict:
     pass
->>>>>>> cf23103 (Implementing RAG from scrach)
 
 def ingest_docs(clear_db=False):
+    if clear_db:
+        reset_db()
     embeddings = OllamaEmbeddings(model=MODEL_NAME)
     vector_store = Chroma(
         collection_name="espazo_nature",
@@ -52,63 +40,26 @@ def ingest_docs(clear_db=False):
         persist_directory=DB_PATH
     )
     # Loading docs
-    loader = PyPDFLoader(os.path.join(DATA_PATH, "INFORMACIÓN PARA EL BOT.pdf")) # Hardcoded for now
+    #loader = PyPDFLoader(os.path.join(DATA_PATH, "INFORMACIÓN PARA EL BOT.pdf")) # Hardcoded for now
+    loader = TextLoader(os.path.join(DATA_PATH, "espazo_nature.txt"))
+    docs = loader.load()
 
-    print(f"Scanning documents in {DATA_PATH}...")
+    assert len(docs) > 0, "No documents loaded"
     
-    all_documents = []
+    print(f"Total characters: {len(docs[0].page_content)}")
+    print(docs[0].page_content[:500])
     
-    if not os.path.exists(DATA_PATH):
-        print(f"Directory {DATA_PATH} does not exist.")
-        return
-
-    # Iterate over files in the directory
-    for root, _, files in os.walk(DATA_PATH):
-        for file in files:
-            file_path = os.path.join(root, file)
-            if file.endswith((".txt", ".pdf")):
-                print(f"Loading {file}...")
-                docs = load_file(file_path)
-                if docs:
-                    all_documents.extend(docs)
-                    print(f"  Loaded {len(docs)} document(s) from {file}")
-                else:
-                    print(f"  Skipped {file} (empty or error)")
-
-    if not all_documents:
-        print("No documents found/loaded.")
-        return
-
-    print(f"Total loaded documents: {len(all_documents)}")
-
-    # Split text into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = text_splitter.split_documents(all_documents)
-    print(f"Split into {len(chunks)} chunks.")
-
-    # Create Embeddings & Store in Chroma
-    print("Initializing ChromaDB and embeddings...")
-    embedding_function = OllamaEmbeddings(model=MODEL_NAME)
-    
-    # Initialize Chroma client
-    db = Chroma(
-        persist_directory=DB_PATH,
-        embedding_function=embedding_function,
-        collection_name="langchain"
+    # Splitting docs
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1024,  # chunk size (characters)
+        chunk_overlap=102,  # chunk overlap (characters)
+        add_start_index=True,  # track index in original document
     )
 
-    print(f"Inserting chunks into ChromaDB in batches of {BATCH_SIZE}...")
-    
-    total_chunks = len(chunks)
-    for i in range(0, total_chunks, BATCH_SIZE):
-        batch = chunks[i : i + BATCH_SIZE]
-        print(f"  Processing batch {i//BATCH_SIZE + 1}/{(total_chunks + BATCH_SIZE - 1)//BATCH_SIZE} ({len(batch)} chunks)...")
-        try:
-            db.add_documents(batch)
-        except Exception as e:
-            print(f"  Error inserting batch {i}: {e}")
-            
-    print(f"Successfully ingested {len(all_documents)} documents ({len(chunks)} chunks) into {DB_PATH}.")
 
 if __name__ == "__main__":
+    from langchain_core.globals import set_debug
+    from dotenv import load_dotenv
+    set_debug(True)
+    load_dotenv()
     ingest_docs(clear_db=True)
