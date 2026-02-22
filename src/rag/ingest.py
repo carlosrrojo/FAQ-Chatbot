@@ -9,24 +9,30 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import chromadb
 
+
 # Configuration
 DATA_PATH = "data/documents"
 DB_PATH = "data/chroma_db"
-MODEL_NAME = "llama3"
+MODEL_NAME = "llama3.1"
+COLLECTION_NAME = "espazo_nature"
 
+
+# Reset database - Erases the collection
 def reset_db():
-    print(f"Resetting database at {DB_PATH} (clearing collection 'langchain')...")
+    print(f"Resetting database at {DB_PATH} (clearing collection '{COLLECTION_NAME}')...")
     client = chromadb.PersistentClient(path=DB_PATH)
     try:
-        client.delete_collection("langchain")
-        print("Deleted existing collection 'langchain'")
+        client.delete_collection(COLLECTION_NAME)
+        print(f"Deleted existing collection '{COLLECTION_NAME}'")
     except Exception as e:
-        print(f"Collection 'langchain' could not be deleted (might not exist): {e}")
+        print(f"Collection '{COLLECTION_NAME}' could not be deleted (might not exist): {e}")
 
 def extract_metadata(content: str, llm: ChatOllama) -> dict:
     pass
 
 def ingest_docs(clear_db=False):
+    if clear_db:
+        reset_db()
     embeddings = OllamaEmbeddings(model=MODEL_NAME)
     vector_store = Chroma(
         collection_name="espazo_nature",
@@ -34,19 +40,19 @@ def ingest_docs(clear_db=False):
         persist_directory=DB_PATH
     )
     # Loading docs
-    loader = PyPDFLoader(os.path.join(DATA_PATH, "INFORMACIÓN PARA EL BOT.pdf")) # Hardcoded for now
-
+    #loader = PyPDFLoader(os.path.join(DATA_PATH, "INFORMACIÓN PARA EL BOT.pdf")) # Hardcoded for now
+    loader = TextLoader(os.path.join(DATA_PATH, "espazo_nature.txt"))
     docs = loader.load()
 
     assert len(docs) > 0, "No documents loaded"
     
     print(f"Total characters: {len(docs[0].page_content)}")
     print(docs[0].page_content[:500])
-
+    
     # Splitting docs
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,  # chunk size (characters)
-        chunk_overlap=200,  # chunk overlap (characters)
+        chunk_size=1024,  # chunk size (characters)
+        chunk_overlap=102,  # chunk overlap (characters)
         add_start_index=True,  # track index in original document
     )
     all_splits = text_splitter.split_documents(docs)
@@ -57,7 +63,10 @@ def ingest_docs(clear_db=False):
     document_ids = vector_store.add_documents(documents=all_splits)
     print(document_ids[:3])
 
-    
 
 if __name__ == "__main__":
+    from langchain_core.globals import set_debug
+    from dotenv import load_dotenv
+    set_debug(True)
+    load_dotenv()
     ingest_docs(clear_db=True)
