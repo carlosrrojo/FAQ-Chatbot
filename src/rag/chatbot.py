@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 DB_PATH = "data/chroma_db"
 MODEL_NAME = "llama3.1"
 # Debug mode
-set_debug(False)
+set_debug(True)
 load_dotenv()
 
 """
@@ -89,4 +89,3 @@ if __name__ == "__main__":
             stream_mode="values",
         ):
             event["messages"][-1].pretty_print()
-        break
