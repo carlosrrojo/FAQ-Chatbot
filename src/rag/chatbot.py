@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 DB_PATH = "data/chroma_db"
 MODEL_NAME = "llama3.1"
 # Debug mode
-set_debug(True)
+set_debug(False)
 load_dotenv()
 
 """
@@ -28,7 +28,12 @@ def retrieve_context(query: str):
     vectorstore = Chroma(collection_name="espazo_nature",
         embedding_function=embeddings,
         persist_directory=DB_PATH)
-    retrieved_docs = vectorstore.similarity_search(query, k=3)
+    retrieved_docs = vectorstore.similarity_search(query, k=3, filter={
+        "$or": [
+            {"section": {"$in": [query]}},
+            {"keywords": {"$in": [query]}}
+        ]
+    })
 
     serialized = "\n\n".join(
         (f"Source: {doc.metadata}\nContent: {doc.page_content}")

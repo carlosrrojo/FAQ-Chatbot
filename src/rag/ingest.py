@@ -1,5 +1,5 @@
 import os
-from langchain_community.document_loaders import TextLoader, DirectoryLoader, PyPDFLoader
+from langchain_community.document_loaders import TextLoader, DirectoryLoader, PyPDFLoader, PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_chroma import Chroma
@@ -7,7 +7,8 @@ from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import chromadb
-import sys
+from extract_processor import ExtractProcessor
+import json
 
 # Configuration
 DATA_PATH = "data/documents"
@@ -17,38 +18,28 @@ COLLECTION_NAME = "espazo_nature"
 
 
 # Reset database - Erases the collection
-def reset_db():
-    print(f"Resetting database at {DB_PATH} (clearing collection '{COLLECTION_NAME}')...")
+def reset_db(strategy: str):
+    print(f"Resetting database at {DB_PATH} (clearing collection '{strategy}_{COLLECTION_NAME}')...")
     client = chromadb.PersistentClient(path=DB_PATH)
     try:
-        client.delete_collection(COLLECTION_NAME)
-        print(f"Deleted existing collection '{COLLECTION_NAME}'")
+        client.delete_collection(strategy+"_"+COLLECTION_NAME)
+        print(f"Deleted existing collection '{strategy}_{COLLECTION_NAME}'")
     except Exception as e:
         print(f"Collection '{COLLECTION_NAME}' could not be deleted (might not exist): {e}")
-
-def extract_metadata(content: str, llm: ChatOllama) -> dict:
-    pass
 
 def load_documents(format: str = "txt") -> list[Document]:
     print(f"Loading documents from {DATA_PATH}...")
     # Loading docs
     docs = []
-    loader = None
     for file in os.listdir(DATA_PATH):
         if format=="txt" and file.endswith("txt"):
-            loader = TextLoader(os.path.join(DATA_PATH, file))
+            docs.append(os.path.join(DATA_PATH, file))
         elif format=="pdf" and file.endswith("pdf"):
-            loader = PyPDFLoader(os.path.join(DATA_PATH, file))
+            docs.append(os.path.join(DATA_PATH, file))
         elif format=="md" and file.endswith("md"):
-            loader = TextLoader(os.path.join(DATA_PATH, file)) # Using TextLoader instead of undefined MarkdownLoader
-        if loader == None:
-            continue
-        docs.extend(loader.load())
+            docs.append(os.path.join(DATA_PATH, file)) # Using TextLoader instead of undefined MarkdownLoader
     return docs
 
-# Process image, tables and other types of data (not neccessary for now)
-def process_documents(docs: list[Document]) -> list[Document]:
-    return docs
 
 #======================
 #= CHUNKING STRATEGIES=
@@ -72,7 +63,7 @@ def md_chunking_strategie(docs):
             md_docs.append(split)
     return md_docs
 
-def naive_chunking_strategie(docs):
+def recursive_chunking_strategie(docs):
     text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1024,  # chunk size (characters)
             chunk_overlap=256,  # chunk overlap (characters)
@@ -88,13 +79,18 @@ def semantic_chunking_strategie(docs, embeddings):
 
 def ingest_docs(clear_db=False, strategy="recursive"):
     if clear_db:
-        reset_db()
+        reset_db(strategy)
+
     embeddings = OllamaEmbeddings(model=MODEL_NAME)
     vector_store = Chroma(
         collection_name=strategy+"_"+COLLECTION_NAME,
         embedding_function=embeddings,
         persist_directory=DB_PATH
     )
+
+    llm = ChatOllama(model=MODEL_NAME)
+    extract_processor = ExtractProcessor(llm)
+
     if strategy == "md":
         docs = load_documents("md")
     else:
@@ -102,36 +98,53 @@ def ingest_docs(clear_db=False, strategy="recursive"):
     assert len(docs) > 0, "No documents loaded"
     print(f"Loaded {len(docs)} documents.")
 
-    characters = 0
+    # Divide documents into sections by headings
+    print(f"Dividing documents into sections...")
+    docs_processed = []
     for doc in docs:
-        characters += len(doc.page_content)
-        print(doc.metadata)
-    
-    print(f"Total characters: {characters}")
-
-    docs_processed = process_documents(docs)
+        docs_processed.extend(extract_processor.process_document(doc))
+    print(f"Processed documents into {len(docs_processed)} sections.")
+    for doc in docs_processed:
+        print(doc.metadata['section'])
 
     # Chunking process
     if strategy == "md":
         all_splits = md_chunking_strategie(docs_processed)
     elif strategy == "recursive":
-        all_splits = naive_chunking_strategie(docs_processed)
+        all_splits = recursive_chunking_strategie(docs_processed)
     elif strategy == "semantic":
         all_splits = semantic_chunking_strategie(docs_processed, embeddings)
     else:
         raise ValueError(f"Unknown chunking strategy: {strategy}")
 
-
     print(f"Split document into {len(all_splits)} sub-documents using {strategy}.")
 
+    # Metadata extraction with LLM
+    print("Extracting keywords for metadata...")
+    docs_with_metadata = []
+    for doc in all_splits:
+        keywords = extract_processor.extract_metadata(doc.page_content)
+        doc.page_content = f"""
+        [KEYWORDS]
+        {" , ".join(keywords)}
+        [CONTENT]
+        {doc.page_content}
+        """
+        doc.metadata.update({"keywords": json.dumps(keywords)})
+        docs_with_metadata.append(doc)
+    
+    print("Added metadata to documents.")
+
     # Storing documents
-    document_ids = vector_store.add_documents(documents=all_splits)
-    print(document_ids[:3])
+    print("Storing documents in vector store...")
+    document_ids = vector_store.add_documents(documents=docs_with_metadata)
+    print(f"Stored {len(document_ids)} documents.")
 
 if __name__ == "__main__":
     from langchain_core.globals import set_debug
     from dotenv import load_dotenv
     set_debug(False)
     load_dotenv()
-    for i in ["recursive","md","semantic"]:
-        ingest_docs(clear_db=False, strategy=i)
+    ingest_docs(clear_db=True, strategy="recursive")
+    #for i in ["md","semantic"]:
+    #    ingest_docs(clear_db=True, strategy=i)
