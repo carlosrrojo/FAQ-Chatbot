@@ -46,6 +46,13 @@ class ExtractProcessor:
         metadata = regex.search(pattern=r"\{(?:[^{}]|(?R))*\}", string=metadata).group()
         return json.loads(metadata)
     
+    def clean_text(self, text: str) -> str:
+        text = text.strip()
+        text = text.replace("\n", "")
+        text = text.replace(":", "")
+        text = text.replace("\t", "")
+        text = text.replace("\r", "")
+        return text
     
     def process_document(self, document_path: str) -> list[Document]:
         section_docs = []
@@ -103,7 +110,8 @@ class ExtractProcessor:
                         parent_section_name = padre["section_name"]
                     else:
                         parent_section_name = ""
-
+                    
+                    text = self.clean_text(text)
                     # Actualizamos la lista eliminando tamaños menores o iguales,
                     # para que la jerarquía siga siendo válida (funciona como una pila)
                     font_sizes = [f for f in font_sizes if f["size"] > max_font_size]
