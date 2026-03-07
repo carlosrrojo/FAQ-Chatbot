@@ -4,6 +4,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from pydantic import BaseModel, Field
 from langchain_ollama import ChatOllama
+from src.utils import get_sections
 
 db_path = "data/chroma_db"
 
@@ -51,19 +52,15 @@ def export_to_google_calendar(event_name: str, start_time: str, end_time: str) -
     
     return f"Successfully scheduled event '{event_name}' from {start_time} to {end_time} on Google Calendar."
 
-def get_sections():
-    embeddings = OllamaEmbeddings(model="llama3.1")
-    vectorstore = Chroma(collection_name="recursive_espazo_nature",
-                         embedding_function=embeddings,
-                         persist_directory=db_path)
-    data = vectorstore.get()
-    sections = set()
-    for meta in data.get("metadatas", []):
-        if meta and "section" in meta:
-            sections.add(meta["section"])
-    return set(sections)
 
-sections = ",".join(str(x) for x in get_sections())
+QUERY_METADATA_PROMPT = (
+    "Extract 'keywords' from the user question to filter a vector database.\n"
+    "Compare them to the following list of sections: {sections}. "
+    "If the question clearly relates to one of these sections, save it to 'finding'. "
+    "If none of the sections are clearly relevant, save 'none' to 'finding'.\n"
+    "CRITICAL: Keep all proper nouns and keywords exactly as they appear in the original language. Do not translate them to English.\n"
+    "Question: {query}"
+)
 
 class QueryMetadata(BaseModel):
     """Extract metadata to filter in the RAG store."""
@@ -80,6 +77,9 @@ def retrieve_documents(query: str):
                          embedding_function=embeddings,
                          persist_directory=db_path)
     retriever = vectorstore.as_retriever()
+
+    sections = ",".join(str(x) for x in get_sections(embeddings, vectorstore))
+
     # First, let's extract metadata while explicitly preserving the keyword language
     prompt = QUERY_METADATA_PROMPT.format(query=query, sections=sections)
     try:
