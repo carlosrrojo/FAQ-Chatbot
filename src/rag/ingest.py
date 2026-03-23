@@ -7,7 +7,7 @@ from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import chromadb
-from extract_processor import ExtractProcessor
+from src.rag.extract_processor import ExtractProcessor
 import json
 
 # Configuration

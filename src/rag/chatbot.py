@@ -10,6 +10,9 @@ from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain_core.globals import set_debug
 from dotenv import load_dotenv
+from langchain.agents.middleware import SummarizationMiddleware
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents import AgentState
 
 # Configuration
 DB_PATH = "data/chroma_db"
@@ -66,15 +69,17 @@ def prompt_with_context(request: ModelRequest) -> str:
 
     return system_message
 
-"""def ask_question(question: str, language: str = "Auto"):
-    chain = get_rag_chain()
-    
-    target_lang = language
-    if language == "Auto":
-        target_lang = "the same language as the question"
-        
-    response = chain.invoke({"input": question, "language": target_lang})
-    return response["answer"]"""
+# TEST MEMORY SUPPORT
+class MemorySupport(AgentState):
+    user_id: str
+
+class CustomMiddleware(AgentMiddleware):
+    state_schema = MemorySupport
+    tools = [retrieve_context]
+
+    def before_model(self, state: MemorySupport, runtime) -> dict[str, Any] | None:
+        return {"user_id": state.user_id}
+
 
 if __name__ == "__main__":
     tools = [] # [retrieve_context]
@@ -84,7 +89,17 @@ if __name__ == "__main__":
         "Use it to answer the user's question.",
         "If the question is in Spanish, answer in Spanish. If the question is in English, answer in English."
     )
-    agent = create_agent(model, tools, middleware=[prompt_with_context])
+    agent = create_agent(
+        model,
+        tools,
+        middleware=[
+            prompt_with_context,
+            SummarizationMiddleware(
+                model, trigger=("tokens", 4000), keep=("messages", 10)
+            )
+        ]
+    )
+    
     while True:
         user_input = input("You: ")
         if user_input.lower() in ["exit", "quit"]:
