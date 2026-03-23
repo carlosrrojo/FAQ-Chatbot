@@ -8,6 +8,7 @@ pypdf
 fastapi
 uvicorn
 python-multipart
-requests
+requests>=2.31.0
 python-dotenv
 watchdog
+flask>=3.0.0
