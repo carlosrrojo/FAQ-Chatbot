@@ -1,13 +1,12 @@
 import os
 from langchain_community.document_loaders import TextLoader, DirectoryLoader, PyPDFLoader, PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
-from langchain_experimental.text_splitter import SemanticChunker
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import chromadb
-from extract_processor import ExtractProcessor
+from src.rag.extract_processor import ExtractProcessor
 import json
 
 # Configuration
@@ -72,11 +71,6 @@ def recursive_chunking_strategie(docs):
     all_splits = text_splitter.split_documents(docs)
     return all_splits
 
-def semantic_chunking_strategie(docs, embeddings):
-    text_splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
-    all_splits = text_splitter.split_documents(docs)
-    return all_splits
-
 def ingest_docs(clear_db=False, strategy="recursive"):
     if clear_db:
         reset_db(strategy)
@@ -112,8 +106,6 @@ def ingest_docs(clear_db=False, strategy="recursive"):
         all_splits = md_chunking_strategie(docs_processed)
     elif strategy == "recursive":
         all_splits = recursive_chunking_strategie(docs_processed)
-    elif strategy == "semantic":
-        all_splits = semantic_chunking_strategie(docs_processed, embeddings)
     else:
         raise ValueError(f"Unknown chunking strategy: {strategy}")
 
@@ -124,11 +116,14 @@ def ingest_docs(clear_db=False, strategy="recursive"):
     docs_with_metadata = []
     for doc in all_splits:
         keywords = extract_processor.extract_metadata(doc.page_content)
+        siblings = extract_processor.get_siblings(all_splits, doc.metadata["parent_section"])
         doc.page_content = f"""
         [KEYWORDS]
         {" , ".join(keywords)}
         [CONTENT]
         {doc.page_content}
+        [REFERENCES]
+        {siblings}
         """
         doc.metadata.update({"keywords": json.dumps(keywords)})
         docs_with_metadata.append(doc)
@@ -145,6 +140,6 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     set_debug(False)
     load_dotenv()
-    ingest_docs(clear_db=True, strategy="recursive")
+    ingest_docs(clear_db=False, strategy="recursive")
     #for i in ["md","semantic"]:
     #    ingest_docs(clear_db=True, strategy=i)

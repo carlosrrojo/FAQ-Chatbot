@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 DB_PATH = "data/chroma_db"
 MODEL_NAME = "llama3.1"
 # Debug mode
-set_debug(False)
+set_debug(True)
 load_dotenv()
 
 """
@@ -47,7 +47,7 @@ def retrieve_context(query: str):
 def prompt_with_context(request: ModelRequest) -> str:
     """Inject context into state messages."""
     embeddings = OllamaEmbeddings(model=MODEL_NAME)
-    vectorstore = Chroma(collection_name="espazo_nature",
+    vectorstore = Chroma(collection_name="recursive_espazo_nature",
         embedding_function=embeddings,
         persist_directory=DB_PATH)
     last_query = request.state["messages"][-1].text

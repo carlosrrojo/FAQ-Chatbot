@@ -46,7 +46,15 @@ class ExtractProcessor:
         metadata = regex.search(pattern=r"\{(?:[^{}]|(?R))*\}", string=metadata).group()
         return json.loads(metadata)
     
-    
+    def get_siblings(self, docs, parent_section):
+        siblings = []
+        for d in docs:
+            if d.metadata["parent_section"] == parent_section:
+                section = d.metadata["section"]
+                if section not in siblings:
+                    siblings.append(section)
+        return ", ".join(siblings)
+        
     def process_document(self, document_path: str) -> list[Document]:
         section_docs = []
 
