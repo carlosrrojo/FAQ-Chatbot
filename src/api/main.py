@@ -62,7 +62,7 @@ async def chat_endpoint(request: ChatRequest):
     """
     try:
         logger.info(f"Received message from {request.user_id}: {request.message} (Lang: {request.language})")
-        answer = ask_question(request.message, request.language)
+        answer = ask_question(request.message, request.language, session_id=request.user_id)
         logger.info(f"Generated answer: {answer}")
         return {"response": answer}
     except Exception as e:

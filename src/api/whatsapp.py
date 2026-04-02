@@ -66,7 +66,7 @@ async def process_whatsapp_message(body: dict):
             logger.info(f"Received WhatsApp message from {from_number}: {text_body}")
             
             # Ask the Brain
-            answer = ask_question(text_body)
+            answer = ask_question(text_body, session_id=from_number)
             
             # Send Reply
             send_whatsapp_message(from_number, answer)

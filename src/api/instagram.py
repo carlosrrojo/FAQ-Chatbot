@@ -61,7 +61,7 @@ async def process_instagram_message(body: dict):
                 logger.info(f"Received Instagram message from {sender_id}: {message_text}")
                 
                 # Ask the Brain
-                answer = ask_question(message_text)
+                answer = ask_question(message_text, session_id=sender_id)
                 
                 # Send Reply
                 send_instagram_message(sender_id, answer)
