@@ -43,8 +43,8 @@ class QueryMetadata(BaseModel):
 metadata_extractor = llm.with_structured_output(QueryMetadata)
 
 #@tool(response_format="content_and_artifact")
-def retrieve_documetns(query: str):
-    """Retrieve documetns for a given query"""
+def retrieve_documents(query: str):
+    """Retrieve documents for a given query"""
     vectorstore = Chroma(
         collection_name=COLLECTION,
         embedding_function=embeddings,
@@ -60,26 +60,26 @@ def retrieve_documetns(query: str):
     try:
         metadata = metadata_extractor.invoke([{"role": "user", "content": prompt}])
 
-        print(f"Extracted metadata: {metadata}")
+        #print(f"Extracted metadata: {metadata}")
         # Append the original keywords to the query to ensure the retrieval engine searches for them
         if metadata.keywords:
             query = query + " " + " ".join(metadata.keywords)
 
         search_filter = None
         if metadata.finding and metadata.finding.lower() != "none" and metadata.finding != "":
-            print(f"Finding: {metadata.finding}")
+            #print(f"Finding: {metadata.finding}")
             # Use similarity_search to fuzzy-match the section name (handles slight misspellings)
             section_docs = vectorstore.similarity_search(
                 metadata.finding, k=1, filter={"section": {"$eq": metadata.finding}}
             )
 
             if section_docs:
-                print(f"Found section doc: {section_docs[0].metadata}")
+                #print(f"Found section doc: {section_docs[0].metadata}")
                 actual_section = section_docs[0].metadata.get("section", "")
                 parent_section = section_docs[0].metadata.get("parent_section", "")
 
                 if parent_section:
-                    print(f"Parent section: {parent_section}")
+                    #print(f"Parent section: {parent_section}")
                     # Retrieve siblings (same parent_section) AND the parent section doc itself
                     search_filter = {
                         "$or": [
@@ -96,11 +96,11 @@ def retrieve_documetns(query: str):
                         ]
                     }
 
-        print(f"Filter: {search_filter}")
+        #print(f"Filter: {search_filter}")
         if search_filter:
             docs = vectorstore.similarity_search(query, k=4, filter=search_filter)
         else:
-            print("NO FILTER FOUND: ", query)
+            #print("NO FILTER FOUND: ", query)
             docs = retriever.invoke(query)
 
     except Exception as e:
@@ -115,7 +115,7 @@ def retrieve_documetns(query: str):
 @dynamic_prompt
 def prompt_with_context(request: ModelRequest):
     query = request.state["messages"][-1].text
-    _, docs = retrieve_documetns(query)
+    _, docs = retrieve_documents(query)
     docs_content = "\n\n".join(doc.page_content for doc in docs)
     system_message = (
         "You are a custom service assistant from company Espazo Nature.",
