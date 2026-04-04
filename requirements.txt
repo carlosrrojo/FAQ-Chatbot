@@ -2,12 +2,14 @@ langchain
 langchain-ollama
 langchain-community
 langchain-chroma
+langchain-text-splitters
+langchain-experimental
 chromadb
 ollama
 pypdf
-fastapi
-uvicorn
+pymupdf
 python-multipart
 requests
 python-dotenv
 watchdog
+keybert
