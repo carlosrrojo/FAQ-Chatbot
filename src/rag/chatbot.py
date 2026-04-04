@@ -69,7 +69,7 @@ def prompt_with_context(request: ModelRequest) -> str:
 
     return system_message
 
-# TEST MEMORY SUPPORT
+"""# TEST MEMORY SUPPORT
 class MemorySupport(AgentState):
     user_id: str
 
@@ -80,7 +80,7 @@ class CustomMiddleware(AgentMiddleware):
     def before_model(self, state: MemorySupport, runtime) -> dict[str, Any] | None:
         return {"user_id": state.user_id}
 
-
+"""
 if __name__ == "__main__":
     tools = [] # [retrieve_context]
     model = ChatOllama(model=MODEL_NAME)
