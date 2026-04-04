@@ -18,6 +18,10 @@ import logging
 from langchain_core.globals import set_debug
 set_debug(False)
 
+from src.rag.reranker import rerank
+
+
+RERANK_K = 8   # pool size passed to RRF before reranking
 MODEL_NAME = "llama3.1"
 DB_PATH = "data/chroma_db"
 COLLECTION = "recursive_espazo_nature"
@@ -121,14 +125,22 @@ def retrieve_documents(query: str):
         sparse_raw = bm25_index.search(query, k=HYBRID_K)
         sparse_hits = _apply_metadata_filter_chroma(sparse_raw, search_filter)
 
-        # Fuse with RRF
+        """# Fuse with RRF
         fused = reciprocal_rank_fusion(
             dense_hits=dense_hits,
             sparse_hits=sparse_hits,
             k=RRF_K,
             top_n=TOP_K,
         )
-        docs = [doc for doc, _score in fused]
+        docs = [doc for doc, _score in fused]"""
+        fused = reciprocal_rank_fusion(
+            dense_hits=dense_hits,
+            sparse_hits=sparse_hits,
+            k=RRF_K,
+            top_n=RERANK_K,       # larger pool for reranker
+        )
+        rrf_docs = [doc for doc, _score in fused]
+        docs = rerank(query, rrf_docs, top_n=TOP_K)
 
     except Exception as e:
         print(f"Error during hybrid retrieval: {e}")
@@ -231,7 +243,7 @@ def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
         {"configurable":{"thread_id": sender_id}},
         stream_mode="values"
     )
-    print(reply["messages"][-1].content)
+    #print(reply["messages"][-1].content)
 
     return reply["messages"][-1].content
 #PIIMiddleware("email", strategy="mask")
