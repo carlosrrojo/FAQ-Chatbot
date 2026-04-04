@@ -5,13 +5,15 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
+from langchain_core.documents import Document
 from aiohttp.web_middlewares import middleware
 from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 from src.utils import get_sections
-from langgraph.checkpoint.memory import InMemorySaver  
+from langgraph.checkpoint.memory import InMemorySaver
 from langchain.agents.middleware import SummarizationMiddleware
 from benchmarks.eval_data import DATA
+from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
 import logging
 from langchain_core.globals import set_debug
 set_debug(False)
@@ -20,10 +22,31 @@ MODEL_NAME = "llama3.1"
 DB_PATH = "data/chroma_db"
 COLLECTION = "recursive_espazo_nature"
 
+HYBRID_K = 20   # candidates fetched from each index before RRF
+RRF_K    = 60   # RRF smoothing constant
+TOP_K    = 3    # final chunks returned after fusion
+
 logger = logging.getLogger(__name__)
 
 llm = ChatOllama(model=MODEL_NAME)
-embeddings = OllamaEmbeddings(model = MODEL_NAME)
+embeddings = OllamaEmbeddings(model=MODEL_NAME)
+
+# --------------------------------------------------------------------------
+# Module-level vector store + BM25 index (built once on import)
+# --------------------------------------------------------------------------
+vectorstore = Chroma(
+    collection_name=COLLECTION,
+    embedding_function=embeddings,
+    persist_directory=DB_PATH,
+)
+
+bm25_index = BM25Index()
+_chroma_result = vectorstore.get()
+_bm25_docs = [
+    Document(page_content=text, metadata=meta)
+    for text, meta in zip(_chroma_result["documents"], _chroma_result["metadatas"])
+]
+bm25_index.build(_bm25_docs)
 
 
 QUERY_METADATA_PROMPT = (
@@ -44,73 +67,115 @@ metadata_extractor = llm.with_structured_output(QueryMetadata)
 
 #@tool(response_format="content_and_artifact")
 def retrieve_documents(query: str):
-    """Retrieve documents for a given query"""
-    vectorstore = Chroma(
-        collection_name=COLLECTION,
-        embedding_function=embeddings,
-        persist_directory=DB_PATH
-    )
-    retriever = vectorstore.as_retriever()
-
+    """Retrieve documents for a given query using hybrid BM25 + dense RRF search."""
     sections = ",".join(str(x) for x in get_sections(embeddings, vectorstore))
 
-    # First, let's extract metadata while explicitly preserving the keyword language
+    # ── 1. Extract metadata (section hint + keywords) ───────────────────────
     prompt = QUERY_METADATA_PROMPT.format(query=query, sections=sections)
-    # Search with filter -> should be implemented with hybrid search
+    search_filter = None
     try:
         metadata = metadata_extractor.invoke([{"role": "user", "content": prompt}])
 
-        #print(f"Extracted metadata: {metadata}")
-        # Append the original keywords to the query to ensure the retrieval engine searches for them
+        # Append keywords to query so both indexes benefit from them
         if metadata.keywords:
             query = query + " " + " ".join(metadata.keywords)
 
-        search_filter = None
         if metadata.finding and metadata.finding.lower() != "none" and metadata.finding != "":
-            #print(f"Finding: {metadata.finding}")
-            # Use similarity_search to fuzzy-match the section name (handles slight misspellings)
+            # Fuzzy-match the section name against Chroma
             section_docs = vectorstore.similarity_search(
                 metadata.finding, k=1, filter={"section": {"$eq": metadata.finding}}
             )
-
             if section_docs:
-                #print(f"Found section doc: {section_docs[0].metadata}")
                 actual_section = section_docs[0].metadata.get("section", "")
                 parent_section = section_docs[0].metadata.get("parent_section", "")
 
                 if parent_section:
-                    #print(f"Parent section: {parent_section}")
-                    # Retrieve siblings (same parent_section) AND the parent section doc itself
+                    # Retrieve siblings + parent section doc
                     search_filter = {
                         "$or": [
                             {"parent_section": {"$eq": parent_section}},
-                            {"section": {"$eq": parent_section}},
+                            {"section":        {"$eq": parent_section}},
                         ]
                     }
                 elif actual_section:
                     # Top-level section: retrieve it and all its children
                     search_filter = {
                         "$or": [
-                            {"section": {"$eq": actual_section}},
+                            {"section":        {"$eq": actual_section}},
                             {"parent_section": {"$eq": actual_section}},
                         ]
                     }
 
-        #print(f"Filter: {search_filter}")
-        if search_filter:
-            docs = vectorstore.similarity_search(query, k=4, filter=search_filter)
-        else:
-            #print("NO FILTER FOUND: ", query)
-            docs = retriever.invoke(query)
-
     except Exception as e:
         print(f"Error extracting metadata: {e}")
-        docs = retriever.invoke(query)
+
+    # ── 2. Hybrid retrieval (BM25 + dense → RRF) ────────────────────────────
+    try:
+        # Dense hits from Chroma
+        dense_results = vectorstore.similarity_search_with_relevance_scores(
+            query=query, k=HYBRID_K, filter=search_filter
+        )
+        dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
+
+        # Sparse hits from BM25 — apply metadata filter manually
+        sparse_raw = bm25_index.search(query, k=HYBRID_K)
+        sparse_hits = _apply_metadata_filter_chroma(sparse_raw, search_filter)
+
+        # Fuse with RRF
+        fused = reciprocal_rank_fusion(
+            dense_hits=dense_hits,
+            sparse_hits=sparse_hits,
+            k=RRF_K,
+            top_n=TOP_K,
+        )
+        docs = [doc for doc, _score in fused]
+
+    except Exception as e:
+        print(f"Error during hybrid retrieval: {e}")
+        docs = vectorstore.as_retriever().invoke(query)
+
     serialized = "\n\n".join(
-        (f"Source: {doc.metadata}\nContent: {doc.page_content}")
+        f"Source: {doc.metadata}\nContent: {doc.page_content}"
         for doc in docs
     )
     return serialized, docs
+
+
+def _apply_metadata_filter_chroma(
+    hits: list[tuple[Document, float]],
+    chroma_filter: dict | None,
+) -> list[tuple[Document, float]]:
+    """
+    Manually apply a Chroma-style $where filter dict to BM25 hits so both
+    indexes respect the same metadata scope.
+
+    Supports: {"$and": [...]}, {"$or": [...]}, and simple leaf clauses
+    like {"section": {"$eq": value}} or {"parent_section": {"$eq": value}}.
+    """
+    if chroma_filter is None:
+        return hits
+
+    def _leaf_passes(doc: Document, clause: dict) -> bool:
+        """Evaluate a single leaf clause like {field: {$eq: val}}."""
+        for field, op in clause.items():
+            if not isinstance(op, dict):
+                continue
+            op_name, val = next(iter(op.items()))
+            actual = doc.metadata.get(field, "")
+            if op_name == "$eq" and actual != val:
+                return False
+            if op_name == "$contains" and val not in actual:
+                return False
+        return True
+
+    def _passes(doc: Document, clause: dict) -> bool:
+        if "$and" in clause:
+            return all(_passes(doc, c) for c in clause["$and"])
+        if "$or" in clause:
+            return any(_passes(doc, c) for c in clause["$or"])
+        return _leaf_passes(doc, clause)
+
+    return [(doc, score) for doc, score in hits if _passes(doc, chroma_filter)]
 
 @dynamic_prompt
 def prompt_with_context(request: ModelRequest):
