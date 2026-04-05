@@ -43,6 +43,7 @@ from src.rag.config import (
     TOP_K,
 )
 from src.rag.reranker import rerank
+from src.telemetry import Timer, timed
 from src.utils import get_sections
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ class QueryMetadata(BaseModel):
 _metadata_extractor = _llm.with_structured_output(QueryMetadata)
 
 
+@timed()
 def _build_section_filter(query: str) -> dict | None:
     """
     Run the metadata extractor to derive a Chroma $where filter from the query.
@@ -217,17 +219,21 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
 
     # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF → rerank
     try:
-        dense_results = _vectorstore.similarity_search_with_relevance_scores(
-            query=query, k=HYBRID_K, filter=search_filter
-        )
+        with Timer("dense_search"):
+            dense_results = _vectorstore.similarity_search_with_relevance_scores(
+                query=query, k=HYBRID_K, filter=search_filter
+            )
         dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
 
-        sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
+        with Timer("bm25_search"):
+            sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
         sparse_hits = _apply_metadata_filter(sparse_raw, search_filter)
 
-        fused   = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
+        with Timer("rrf_fusion"):
+            fused    = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
         rrf_docs = [doc for doc, _ in fused]
-        docs     = rerank(query, rrf_docs, top_n=TOP_K)
+        with Timer("rerank"):
+            docs     = rerank(query, rrf_docs, top_n=TOP_K)
 
     except Exception:
         logger.exception("Hybrid retrieval failed; falling back to dense-only.")
@@ -266,6 +272,7 @@ _SYSTEM_PROMPT = (
 _llm_with_tools = _llm.bind_tools([retrieve_documents])
 
 
+@timed()
 def _call_model(state: AgentState) -> dict:
     """Invoke the LLM, injecting the system prompt on every turn."""
     messages = [SystemMessage(content=_SYSTEM_PROMPT)] + state["messages"]
@@ -298,6 +305,7 @@ rag_agent = _workflow.compile(checkpointer=_memory)
 # Public API
 # ---------------------------------------------------------------------------
 
+@timed()
 def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
     """
     Generate a reply for an incoming customer message.

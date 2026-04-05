@@ -7,6 +7,7 @@ them to the RAG agent via :func:`src.rag.agent.generate_reply`.
 
 import logging
 import os
+import threading
 
 from dotenv import load_dotenv
 from flask import Flask, request
@@ -80,17 +81,23 @@ def handle_webhook():
 
     object_type = data.get("object")
 
-    try:
-        if object_type == "whatsapp_business_account":
-            _handle_whatsapp(data)
-        elif object_type == "instagram":
-            _handle_instagram(data)
-        else:
-            logger.warning("Unknown webhook object type: %s", object_type)
-    except Exception:
-        # Always return 200 so Meta does not retry; log the error internally.
-        logger.exception("Unhandled error processing webhook")
+    if object_type == "whatsapp_business_account":
+        handler = _handle_whatsapp
+    elif object_type == "instagram":
+        handler = _handle_instagram
+    else:
+        logger.warning("Unknown webhook object type: %s", object_type)
+        return "EVENT_RECEIVED", 200
 
+    # Offload to a background thread so Meta gets 200 immediately and does
+    # not retry the event while the LLM is still processing.
+    def _run():
+        try:
+            handler(data)
+        except Exception:
+            logger.exception("Unhandled error processing webhook")
+
+    threading.Thread(target=_run, daemon=True).start()
     return "EVENT_RECEIVED", 200
 
 
@@ -111,12 +118,12 @@ def _handle_whatsapp(data: dict) -> None:
                     reply = generate_reply("whatsapp", user_text, sender)
                     whatsapp.send_text(to=sender, text=reply)
                 else:
+                    # Ignore non-text events (images, status updates, reactions…).
+                    # DO NOT send a reply here — status/delivery webhooks would
+                    # create an infinite loop.
                     logger.info(
-                        "[WA] Unsupported message type '%s' from %s", msg_type, sender
-                    )
-                    whatsapp.send_text(
-                        to=sender,
-                        text="Sorry, I can only process text messages at the moment.",
+                        "[WA] Ignoring unsupported message type '%s' from %s",
+                        msg_type, sender,
                     )
                 
 

@@ -1,5 +1,6 @@
 from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document
+from src.telemetry import timed
 
 RERANK_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 
@@ -11,6 +12,7 @@ def get_encoder() -> CrossEncoder:
         _encoder = CrossEncoder(RERANK_MODEL)
     return _encoder
 
+@timed()
 def rerank(
     query: str,
     docs: list[Document],
