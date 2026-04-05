@@ -1,49 +1,58 @@
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
-from contextlib import asynccontextmanager
+"""
+Flask webhook server for the Espazo Nature chatbot.
+
+Handles incoming events from Meta (WhatsApp + Instagram) and dispatches
+them to the RAG agent via :func:`src.rag.agent.generate_reply`.
+"""
+
+import logging
+import os
+
+from dotenv import load_dotenv
+from flask import Flask, request
+
+from src.rag.agent import generate_reply
 from src.rag.ingest import DATA_PATH
 from src.rag.watcher import start_watcher
 from src.api.whatsapp import WhatsAppClient
-from dotenv import load_dotenv
-import logging
-import os
-from flask import Flask, request, jsonify
-from src.rag.rag_as_agent import generate_reply
 
-# Load Environment Variables
 load_dotenv()
 
-# Logging Setup
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
+# ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-# Global Observer
-observer = None
-
-# ── Clients ──────────────────────────────────────────────────────────────────
+# ── Clients ───────────────────────────────────────────────────────────────────
 whatsapp = WhatsAppClient(
     phone_number_id=os.environ["WA_PHONE_NUMBER_ID"],
     access_token=os.environ["META_ACCESS_TOKEN"],
 )
 
-"""instagram = InstagramClient(
-    page_id=os.environ["IG_PAGE_ID"],
-    access_token=os.environ["META_ACCESS_TOKEN"],
-)"""
-
 VERIFY_TOKEN = os.environ["WEBHOOK_VERIFY_TOKEN"]
+
+# ── Document watcher (started once at import time) ────────────────────────────
+_observer = None
+try:
+    abs_data_path = os.path.abspath(DATA_PATH)
+    os.makedirs(abs_data_path, exist_ok=True)
+    _observer = start_watcher(abs_data_path)
+    logger.info("Document watcher started on %s", abs_data_path)
+except Exception:
+    logger.exception("Failed to start document watcher")
+
 
 # ── Webhook verification (GET) ────────────────────────────────────────────────
 @app.get("/webhook")
 def verify_webhook():
     """
-    Meta sends a GET request to verify your webhook endpoint.
-    Must return hub.challenge if the token matches.
+    Meta sends a GET to verify the webhook endpoint.
+    Must echo back ``hub.challenge`` when the token matches.
     """
     mode      = request.args.get("hub.mode")
     token     = request.args.get("hub.verify_token")
@@ -53,15 +62,17 @@ def verify_webhook():
         logger.info("Webhook verified successfully.")
         return challenge, 200
 
-    logger.warning("Webhook verification failed. Check your WEBHOOK_VERIFY_TOKEN.")
+    logger.warning("Webhook verification failed. Check WEBHOOK_VERIFY_TOKEN.")
     return "Forbidden", 403
+
 
 # ── Incoming events (POST) ────────────────────────────────────────────────────
 @app.post("/webhook")
 def handle_webhook():
     """
-    Receives all incoming events from Meta (WhatsApp + Instagram).
-    Must respond with 200 quickly; heavy work should be queued in production.
+    Receive all incoming events from Meta (WhatsApp + Instagram).
+    Always responds 200 quickly; heavy processing happens synchronously
+    (move to a task queue for production scale).
     """
     data = request.get_json(silent=True)
     if not data:
@@ -72,144 +83,72 @@ def handle_webhook():
     try:
         if object_type == "whatsapp_business_account":
             _handle_whatsapp(data)
-
         elif object_type == "instagram":
             _handle_instagram(data)
-
         else:
-            logger.warning("Unknown object type: %s", object_type)
-
-    except Exception as exc:
-        # Always return 200 so Meta doesn't retry; log the error internally
-        logger.exception("Error processing webhook: %s", exc)
+            logger.warning("Unknown webhook object type: %s", object_type)
+    except Exception:
+        # Always return 200 so Meta does not retry; log the error internally.
+        logger.exception("Unhandled error processing webhook")
 
     return "EVENT_RECEIVED", 200
 
+
 # ── WhatsApp dispatcher ───────────────────────────────────────────────────────
-def _handle_whatsapp(data: dict):
+def _handle_whatsapp(data: dict) -> None:
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
-            value = change.get("value", {})
+            value    = change.get("value", {})
             messages = value.get("messages", [])
 
             for msg in messages:
                 msg_type = msg.get("type")
-                sender   = msg.get("from")          # E.164 phone number
+                sender   = msg.get("from")  # E.164 phone number
 
                 if msg_type == "text":
                     user_text = msg["text"]["body"]
                     logger.info("[WA] Message from %s: %s", sender, user_text)
-
-                    reply = generate_reply(
-                        platform="whatsapp",
-                        user_message=user_text,
-                        sender_id=sender,
-                    )
+                    reply = generate_reply("whatsapp", user_text, sender)
                     whatsapp.send_text(to=sender, text=reply)
+                else:
+                    logger.info(
+                        "[WA] Unsupported message type '%s' from %s", msg_type, sender
+                    )
+                    whatsapp.send_text(
+                        to=sender,
+                        text="Sorry, I can only process text messages at the moment.",
+                    )
+                
 
-                elif msg_type == "interactive":
-                    # Button / list reply
+                """elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     if interactive.get("type") == "button_reply":
                         user_text = interactive["button_reply"]["title"]
                     else:
                         user_text = interactive.get("list_reply", {}).get("title", "")
-
                     logger.info("[WA] Interactive from %s: %s", sender, user_text)
                     reply = generate_reply("whatsapp", user_text, sender)
-                    whatsapp.send_text(to=sender, text=reply)
-
-                else:
-                    logger.info("[WA] Unsupported message type '%s' from %s", msg_type, sender)
-                    whatsapp.send_text(
-                        to=sender,
-                        text="Sorry, I can only process text messages at the moment.",
-                    )
+                    whatsapp.send_text(to=sender, text=reply)"""
 
 
 # ── Instagram dispatcher ──────────────────────────────────────────────────────
-def _handle_instagram(data: dict):
+def _handle_instagram(data: dict) -> None:
     for entry in data.get("entry", []):
         for event in entry.get("messaging", []):
             sender_id = event.get("sender", {}).get("id")
             msg       = event.get("message", {})
 
             if not msg or msg.get("is_echo"):
-                # Ignore echo events (messages sent BY the page)
-                continue
+                continue  # ignore echo events (messages sent BY the page)
 
             if "text" in msg:
                 user_text = msg["text"]
                 logger.info("[IG] DM from %s: %s", sender_id, user_text)
-
-                reply = generate_reply(
-                    platform="instagram",
-                    user_message=user_text,
-                    sender_id=sender_id,
-                )
-                #instagram.send_text(recipient_id=sender_id, text=reply)
+                generate_reply("instagram", user_text, sender_id)
 
             elif "attachments" in msg:
                 logger.info("[IG] Attachment from %s (unsupported)", sender_id)
-                """instagram.send_text(
-                    recipient_id=sender_id,
-                    text="Thanks for your message! I can only read text for now. How can I help you?",
-                )"""
 
-
-
-# WATCHDOG
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    logger.info(f"Starting document watcher on {DATA_PATH}...")
-    global observer
-    try:
-        # Ensure path exists, absolute path
-        abs_path = os.path.abspath(DATA_PATH)
-        if not os.path.exists(abs_path):
-             os.makedirs(abs_path)
-             
-        observer = start_watcher(abs_path)
-    except Exception as e:
-        logger.error(f"Failed to start watcher: {e}")
-        
-    yield
-    
-    # Shutdown
-    if observer:
-        logger.info("Stopping document watcher...")
-        observer.stop()
-        observer.join()
-
-"""
-app = FastAPI(title="Espazo Nature Chatbot", lifespan=lifespan)
-
-# Include Routers
-app.include_router(whatsapp_router)
-app.include_router(instagram_router)
-
-class ChatRequest(BaseModel):
-    message: str
-    user_id: str = "guest"
-    language: str = "Auto"
-
-@app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    Simple endpoint for direct testing (Postman/Curl).
-    try:
-        logger.info(f"Received message from {request.user_id}: {request.message} (Lang: {request.language})")
-        answer = ask_question(request.message, request.language)
-        logger.info(f"Generated answer: {answer}")
-        return {"response": answer}
-    except Exception as e:
-        logger.error(f"Error processing text: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
-"""
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
