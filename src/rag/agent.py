@@ -124,28 +124,28 @@ def _build_section_filter(query: str) -> dict | None:
 
     # Fuzzy-match the section name against Chroma to get the canonical value
     section_docs = _vectorstore.similarity_search(
-        meta.finding, k=1, filter={"section": {"$eq": meta.finding}}
+        meta.finding, k=1, filter={"subsection": {"$eq": meta.finding}}
     )
     if not section_docs:
         return None
 
-    actual_section = section_docs[0].metadata.get("section", "")
-    parent_section = section_docs[0].metadata.get("parent_section", "")
+    actual_section = section_docs[0].metadata.get("subsection", "")
+    parent_section = section_docs[0].metadata.get("section", "")
 
     if parent_section:
         # Retrieve siblings (same parent) AND the parent section doc itself
         return {
             "$or": [
-                {"parent_section": {"$eq": parent_section}},
-                {"section":        {"$eq": parent_section}},
+                {"section": {"$eq": parent_section}},
+                {"subsection": {"$eq": parent_section}},
             ]
         }
     if actual_section:
         # Top-level section: retrieve it and all its children
         return {
             "$or": [
-                {"section":        {"$eq": actual_section}},
-                {"parent_section": {"$eq": actual_section}},
+                {"subsection": {"$eq": actual_section}},
+                {"section":    {"$eq": actual_section}},
             ]
         }
     return None

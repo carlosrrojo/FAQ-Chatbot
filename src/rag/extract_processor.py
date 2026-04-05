@@ -58,7 +58,7 @@ class ExtractProcessor:
         section_docs = []
 
         fitz_doc = fitz.open(document_path)
-        current_section = {"parent_section":"","section": "Espazo Nature", "text": "", "page_start": 0}
+        current_section = {"section":"","subsection": "Espazo Nature", "text": "", "page_start": 0}
         font_sizes = [] # Lista para almacenar el tamaño superior {"section_name": ..., "size": ...}
         for page_num, page in enumerate(fitz_doc):
             blocks = page.get_text("dict")["blocks"]
@@ -100,7 +100,7 @@ class ExtractProcessor:
                         #metadata = fitz_doc.metadata.copy()
                         #self.extract_metadata(current_section["text"])
                         metadata = {}
-                        metadata.update({"parent_section":current_section["parent_section"],"section": current_section["section"], "page": current_section["page_start"]})
+                        metadata.update({"section":current_section["section"],"subsection": current_section["subsection"], "page": current_section["page_start"]})
                         section_docs.append(Document(page_content=current_section["text"].strip(), metadata=metadata))
 
                     # Buscar el elemento con el menor tamaño dentro de los mayores
@@ -119,8 +119,8 @@ class ExtractProcessor:
 
                     # Start new section
                     current_section = {
-                        "parent_section": parent_section_name,
-                        "section": text,
+                        "section": parent_section_name,
+                        "subsection": text,
                         "text": "",
                         "page_start": page_num
                     }
@@ -131,7 +131,7 @@ class ExtractProcessor:
         if current_section["text"].strip():
             #metadata = fitz_doc.metadata.copy()
             metadata = {}
-            metadata.update({"parent_section":current_section["parent_section"],"section": current_section["section"], "page": current_section["page_start"]})
+            metadata.update({"section":current_section["section"],"subsection": current_section["subsection"], "page": current_section["page_start"]})
             section_docs.append(Document(page_content=current_section["text"].strip(), metadata=metadata))
                     
         try:
