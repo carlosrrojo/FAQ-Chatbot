@@ -78,7 +78,7 @@ _bm25_index.build([
 _QUERY_METADATA_PROMPT = (
     "Analyse the user question and extract the following fields to help filter a "
     "Spanish-language knowledge base about a rural tourism company.\n\n"
-    "1. 'finding': the specific topic/section the question is about. "
+    "1. 'finding': the specific topic/section the question is about."
     "Compare it to these known sections: {sections}. "
     "If the question clearly maps to one of them use that name; otherwise 'none'.\n"
     "2. 'keywords': proper nouns or key terms in their ORIGINAL language (do NOT translate).\n"
@@ -92,7 +92,7 @@ _QUERY_METADATA_PROMPT = (
 
 
 class QueryMetadata(BaseModel):
-    """Structured output used to filter the vector store before retrieval."""
+    """Structured output used to filter the vectorstore before retrieval."""
 
     finding: str = Field(
         description="The specific section the query is about, or 'none'."
@@ -242,6 +242,10 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     # 1. Derive metadata filter + augment query with extracted keywords.
     #    _build_metadata_filter does one LLM call and returns both.
     search_filter, meta = _build_metadata_filter(query)
+    print("==========================================")
+    print(f"search_filter: {search_filter}")
+    print(f"meta: {meta}")
+    print("==========================================")
     if meta and meta.keywords:
         query = query + " " + " ".join(meta.keywords)
 
@@ -252,13 +256,30 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
             query=query, k=HYBRID_K, filter=search_filter
         )
         dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
+        print(f"\n── Dense hits ({len(dense_hits)}) ──────────────────────────────")
+        for doc, score in dense_hits:
+            print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
 
         sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
+        print(f"\n── Sparse hits raw ({len(sparse_raw)}) ───────────────")
+        for doc, score in sparse_raw:
+            print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
         sparse_hits = _apply_metadata_filter(sparse_raw, search_filter)
+        print(f"\n── Sparse hits after filter ({len(sparse_hits)}) ───────────────")
+        for doc, score in sparse_hits:
+            print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
 
-        fused   = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
+        fused    = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
         rrf_docs = [doc for doc, _ in fused]
-        docs     = rerank(query, rrf_docs, top_n=TOP_K)
+        print(f"\n── RRF fused → rerank pool ({len(rrf_docs)}) ───────────────────")
+        for doc, score in fused:
+            print(f"  [{score:.4f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
+
+        docs = rerank(query, rrf_docs, top_n=TOP_K)
+        print(f"\n── Final docs after rerank ({len(docs)}) ───────────────────────")
+        for doc in docs:
+            print(f"  {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
+        print("────────────────────────────────────────────────────────────\n")
 
     except Exception:
         logger.exception("Hybrid retrieval failed; falling back to dense-only.")

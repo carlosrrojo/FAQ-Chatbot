@@ -134,8 +134,6 @@ REGLAS ESTRICTAS:
 ESQUEMA JSON A DEVOLVER:
 {{
   "entity_type":         "<servicio|alojamiento|entorno|actividad|general>",
-  "section":             "<sección principal, e.g. alojamientos, servicios, entorno>",
-  "subsection":          "<nombre específico del elemento, e.g. gran_villa, surf_school>",
   "content_type":        "<descripcion|precio|normas|servicios|ubicacion|faqs>",
   "accommodation_type":  "<villa|apartamento|casa|cabaña|glamping|null>",
   "capacity":            ["<N_personas>"],
@@ -268,8 +266,6 @@ class MetadataExtractor:
 
         entity_type = self._str(data.get("entity_type"), "general")
         meta = ExtractedMetadata(
-            section            = self._str(data.get("section")),
-            subsection         = self._str(data.get("subsection")),
             content_type       = self._str(data.get("content_type"), "descripcion"),
             accommodation_type = self._nullable_str(data.get("accommodation_type")),
             capacity           = self._list(data.get("capacity")),
@@ -342,7 +338,7 @@ def enrich_document(
     doc,                          # LangChain Document
     extractor: MetadataExtractor,
     entity_id: Optional[str] = None,
-    extras: Optional[dict] = None,
+    extras: Optional[list[str]] = None,
 ) -> None:
     """
     Enrich a LangChain Document in-place with extracted metadata.
@@ -354,10 +350,10 @@ def enrich_document(
         entity_id = entity_id or doc.metadata.get("entity_id"),
     )
     siblings = "\n".join(extras)
-    if "section" in extracted:
+    if len(extras) > 1:
         doc.page_content = f"""
         {doc.page_content}
-        [{extracted["section"]}]:
+        [{doc.metadata["section"]}]:
         {siblings}
         """
     doc.metadata.update(extracted)
