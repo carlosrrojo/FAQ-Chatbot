@@ -76,12 +76,17 @@ _bm25_index.build([
 # ---------------------------------------------------------------------------
 
 _QUERY_METADATA_PROMPT = (
-    "Extract 'keywords' from the user question to filter a vector database.\n"
-    "Compare them to the following list of sections: {sections}. "
-    "If the question clearly relates to one of these sections, save it to 'finding'. "
-    "If none of the sections are clearly relevant, save 'none' to 'finding'.\n"
-    "CRITICAL: Keep all proper nouns and keywords exactly as they appear in the "
-    "original language. Do not translate them to English.\n"
+    "Analyse the user question and extract the following fields to help filter a "
+    "Spanish-language knowledge base about a rural tourism company.\n\n"
+    "1. 'finding': the specific topic/section the question is about. "
+    "Compare it to these known sections: {sections}. "
+    "If the question clearly maps to one of them use that name; otherwise 'none'.\n"
+    "2. 'keywords': proper nouns or key terms in their ORIGINAL language (do NOT translate).\n"
+    "3. 'entity_type': the type of entity the question is about. "
+    "Choose ONE of: alojamiento, servicio, actividad, entorno, general.\n"
+    "4. 'content_type': what kind of information is being asked for. "
+    "Choose ONE of: descripcion, precio, normas, servicios, ubicacion, faqs, general.\n\n"
+    "CRITICAL: reply only with the structured output, no extra text.\n"
     "Question: {query}"
 )
 
@@ -90,7 +95,7 @@ class QueryMetadata(BaseModel):
     """Structured output used to filter the vector store before retrieval."""
 
     finding: str = Field(
-        description="The specific section mentioned in the query, or 'none' if none."
+        description="The specific section the query is about, or 'none'."
     )
     keywords: list[str] = Field(
         description=(
@@ -98,16 +103,39 @@ class QueryMetadata(BaseModel):
             "language. DO NOT translate them."
         )
     )
+    entity_type: str = Field(
+        default="general",
+        description=(
+            "Type of entity: alojamiento | servicio | actividad | entorno | general. "
+            "Use 'general' when uncertain."
+        ),
+    )
+    content_type: str = Field(
+        default="general",
+        description=(
+            "Kind of information requested: "
+            "descripcion | precio | normas | servicios | ubicacion | faqs | general. "
+            "Use 'general' when uncertain."
+        ),
+    )
 
 
 _metadata_extractor = _llm.with_structured_output(QueryMetadata)
 
 
-def _build_section_filter(query: str) -> dict | None:
-    """
-    Run the metadata extractor to derive a Chroma $where filter from the query.
+# Fields that are considered "unset" / uninformative
+_UNSET_VALUES = {"", "none", "general", "n/a"}
 
-    Returns None if no relevant section is found or on any error.
+
+def _build_metadata_filter(query: str) -> tuple[dict | None, QueryMetadata | None]:
+    """
+    Run the LLM metadata extractor once and derive a Chroma ``$where`` filter
+    that combines section/subsection with entity_type and content_type when
+    they are confidently inferred.
+
+    Returns ``(filter_dict | None, QueryMetadata | None)``.
+    The ``QueryMetadata`` is also returned so the caller can reuse its
+    keywords without a second LLM call.
     """
     sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
     prompt = _QUERY_METADATA_PROMPT.format(query=query, sections=sections)
@@ -117,38 +145,49 @@ def _build_section_filter(query: str) -> dict | None:
         )
     except Exception:
         logger.exception("Metadata extraction failed for query: %r", query)
-        return None
+        return None, None
 
-    if not meta.finding or meta.finding.lower() in ("none", ""):
-        return None
+    clauses: list[dict] = []
 
-    # Fuzzy-match the section name against Chroma to get the canonical value
-    section_docs = _vectorstore.similarity_search(
-        meta.finding, k=1, filter={"subsection": {"$eq": meta.finding}}
-    )
-    if not section_docs:
-        return None
+    # ── Section / subsection clause (existing logic) ───────────────────────
+    if meta.finding and meta.finding.lower() not in _UNSET_VALUES:
+        section_docs = _vectorstore.similarity_search(
+            meta.finding, k=1, filter={"subsection": {"$eq": meta.finding}}
+        )
+        if section_docs:
+            actual_section = section_docs[0].metadata.get("subsection", "")
+            parent_section = section_docs[0].metadata.get("section", "")
 
-    actual_section = section_docs[0].metadata.get("subsection", "")
-    parent_section = section_docs[0].metadata.get("section", "")
+            if parent_section:
+                clauses.append({
+                    "$or": [
+                        {"section":    {"$eq": parent_section}},
+                        {"subsection": {"$eq": parent_section}},
+                    ]
+                })
+            elif actual_section:
+                clauses.append({
+                    "$or": [
+                        {"subsection": {"$eq": actual_section}},
+                        {"section":    {"$eq": actual_section}},
+                    ]
+                })
 
-    if parent_section:
-        # Retrieve siblings (same parent) AND the parent section doc itself
-        return {
-            "$or": [
-                {"section": {"$eq": parent_section}},
-                {"subsection": {"$eq": parent_section}},
-            ]
-        }
-    if actual_section:
-        # Top-level section: retrieve it and all its children
-        return {
-            "$or": [
-                {"subsection": {"$eq": actual_section}},
-                {"section":    {"$eq": actual_section}},
-            ]
-        }
-    return None
+    # ── entity_type clause ────────────────────────────────────────────────
+    et = (meta.entity_type or "").lower().strip()
+    if et and et not in _UNSET_VALUES:
+        clauses.append({"entity_type": {"$eq": et}})
+
+    # ── content_type clause ───────────────────────────────────────────────
+    ct = (meta.content_type or "").lower().strip()
+    if ct and ct not in _UNSET_VALUES:
+        clauses.append({"content_type": {"$eq": ct}})
+
+    if not clauses:
+        return None, meta
+    if len(clauses) == 1:
+        return clauses[0], meta
+    return {"$and": clauses}, meta
 
 
 def _apply_metadata_filter(
@@ -200,20 +239,12 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     Returns both a serialised string (for the LLM context) and the raw
     Document objects (artifact, for downstream use).
     """
-    # 1. Derive metadata filter + augment query with extracted keywords
-    search_filter = _build_section_filter(query)
+    # 1. Derive metadata filter + augment query with extracted keywords.
+    #    _build_metadata_filter does one LLM call and returns both.
+    search_filter, meta = _build_metadata_filter(query)
+    if meta and meta.keywords:
+        query = query + " " + " ".join(meta.keywords)
 
-    # Re-extract keywords to append to the query (improves both indexes)
-    sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
-    prompt = _QUERY_METADATA_PROMPT.format(query=query, sections=sections)
-    try:
-        meta: QueryMetadata = _metadata_extractor.invoke(
-            [{"role": "user", "content": prompt}]
-        )
-        if meta.keywords:
-            query = query + " " + " ".join(meta.keywords)
-    except Exception:
-        logger.warning("Keyword augmentation failed; using original query.")
 
     # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF → rerank
     try:

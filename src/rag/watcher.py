@@ -4,7 +4,7 @@ import os
 import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from src.rag.ingest import ingest_docs
+from src.rag.ingestShim import ingest_docs
 
 # Debounce time in seconds
 DEBOUNCE_DELAY = 2.0
