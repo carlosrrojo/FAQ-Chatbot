@@ -1,13 +1,12 @@
-import os
-from langchain_community.document_loaders import TextLoader, DirectoryLoader, PyPDFLoader, PyMuPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from src.rag.metadata_extractor import MetadataExtractor, enrich_document
+import glob as glob_module
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
-import chromadb
-from src.rag.extract_processor import ExtractProcessor
-import json
+from src.rag.processor import parse_doc, get_siblings
+from src.rag.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
+# from processor import add_metadata_keyBERT
 
 CHUNK_SIZE      = 1024
 CHUNK_OVERLAP   = 256
