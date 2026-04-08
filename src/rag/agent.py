@@ -210,10 +210,12 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
 
     # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF → rerank
     try:
-        dense_results = _vectorstore.similarity_search_with_relevance_scores(
+        dense_results = _vectorstore.similarity_search_with_score(
             query=query, k=HYBRID_K, filter=search_filter
         )
-        dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
+        # Use similarity_search_with_score to avoid LangChain's [0,1] bounds warning.
+        # RRF only cares about rank ordering anyway, so the raw distances are fine.
+        dense_hits = [(doc, score) for doc, score in dense_results]
         #print(f"\n── Dense hits ({len(dense_hits)}) ──────────────────────────────")
         #for doc, score in dense_hits:
         #    print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")

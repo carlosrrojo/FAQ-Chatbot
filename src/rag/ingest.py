@@ -8,8 +8,8 @@ from src.rag.processor import parse_doc, get_siblings
 from src.rag.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
 # from processor import add_metadata_keyBERT
 
-CHUNK_SIZE      = 1024
-CHUNK_OVERLAP   = 256
+CHUNK_SIZE      = 800
+CHUNK_OVERLAP   = 200
 
 # 1. Load each PDF and split into sections using headings
 docs: list[Document] = []
