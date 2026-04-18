@@ -80,16 +80,22 @@ def handle_webhook():
 
     object_type = data.get("object")
 
-    try:
-        if object_type == "whatsapp_business_account":
-            _handle_whatsapp(data)
-        elif object_type == "instagram":
-            _handle_instagram(data)
-        else:
-            logger.warning("Unknown webhook object type: %s", object_type)
-    except Exception:
-        # Always return 200 so Meta does not retry; log the error internally.
-        logger.exception("Unhandled error processing webhook")
+    import threading
+
+    def process_event():
+        try:
+            if object_type == "whatsapp_business_account":
+                _handle_whatsapp(data)
+            elif object_type == "instagram":
+                _handle_instagram(data)
+            else:
+                logger.warning("Unknown webhook object type: %s", object_type)
+        except Exception:
+            # Always return 200 so Meta does not retry; log the error internally.
+            logger.exception("Unhandled error processing webhook")
+
+    # Run processing asynchronously to avoid Meta webhook timeouts and retries
+    threading.Thread(target=process_event).start()
 
     return "EVENT_RECEIVED", 200
 
@@ -118,17 +124,6 @@ def _handle_whatsapp(data: dict) -> None:
                         to=sender,
                         text="Sorry, I can only process text messages at the moment.",
                     )
-                
-
-                """elif msg_type == "interactive":
-                    interactive = msg.get("interactive", {})
-                    if interactive.get("type") == "button_reply":
-                        user_text = interactive["button_reply"]["title"]
-                    else:
-                        user_text = interactive.get("list_reply", {}).get("title", "")
-                    logger.info("[WA] Interactive from %s: %s", sender, user_text)
-                    reply = generate_reply("whatsapp", user_text, sender)
-                    whatsapp.send_text(to=sender, text=reply)"""
 
 
 # ── Instagram dispatcher ──────────────────────────────────────────────────────
