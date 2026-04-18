@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+import difflib
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -357,6 +358,48 @@ def enrich_document(
         {siblings}
         """
     doc.metadata.update(extracted)
+
+
+# ---------------------------------------------------------------------------
+# Label validation helper
+# ---------------------------------------------------------------------------
+
+def find_valid_labels(finding: str, chroma_snapshot: dict, logger=None, cutoff: float = 0.6) -> tuple[str | None, str | None]:
+    """
+    Ensure the extracted finding actually exists in the collection as a section or subsection.
+    Uses difflib for fuzzy matching. Returns a tuple (canonical_label, field_type) where 
+    field_type is 'section', 'subsection', or 'both'. Returns (None, None) if not found.
+    """
+
+    valid_labels: dict[str, set[str]] = {}
+    for meta_dict in chroma_snapshot.get("metadatas", []):
+        if meta_dict:
+            for field in ["section", "subsection"]:
+                if field in meta_dict:
+                    val = meta_dict[field]
+                    if val not in valid_labels:
+                        valid_labels[val] = set()
+                    valid_labels[val].add(field)
+                
+    label_map = {str(lbl).lower(): lbl for lbl in valid_labels}
+    finding_lower = finding.lower()
+    
+    canonical = None
+    if finding_lower in label_map:
+        canonical = label_map[finding_lower]
+    else:
+        matches = difflib.get_close_matches(finding_lower, label_map.keys(), n=1, cutoff=cutoff)
+        if matches:
+            canonical = label_map[matches[0]]
+            
+    if canonical:
+        fields = valid_labels[canonical]
+        field_type = "both" if len(fields) > 1 else next(iter(fields))
+        return canonical, field_type
+    
+    if logger:
+        logger.warning("Metadata finding '%s' not present in collection labels.", finding)
+    return None, None
 
 
 # ---------------------------------------------------------------------------

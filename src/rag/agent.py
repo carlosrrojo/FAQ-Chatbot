@@ -43,6 +43,7 @@ from src.rag.config import (
     TOP_K,
 )
 from src.rag.reranker import rerank
+from src.rag.metadata_extractor import find_valid_labels
 from src.utils import get_sections
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,6 @@ _QUERY_METADATA_PROMPT = (
     "If none of the sections are clearly relevant, save 'none' to 'finding'.\n"
     "CRITICAL: Keep all proper nouns and keywords exactly as they appear in the "
     "original language. Do not translate them to English.\n"
-    "Question: {query}"
 )
 
 
@@ -110,45 +110,38 @@ def _build_section_filter(query: str) -> dict | None:
     Returns None if no relevant section is found or on any error.
     """
     sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
-    prompt = _QUERY_METADATA_PROMPT.format(query=query, sections=sections)
+    system_prompt = _QUERY_METADATA_PROMPT.format(sections=sections)
     try:
-        meta: QueryMetadata = _metadata_extractor.invoke(
-            [{"role": "user", "content": prompt}]
-        )
+        meta: QueryMetadata = _metadata_extractor.invoke([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ])
     except Exception:
         logger.exception("Metadata extraction failed for query: %r", query)
         return None
 
     if not meta.finding or meta.finding.lower() in ("none", ""):
         return None
-
-    # Fuzzy-match the section name against Chroma to get the canonical value
-    section_docs = _vectorstore.similarity_search(
-        meta.finding, k=1, filter={"subsection": {"$eq": meta.finding}}
+    print(f"metadata: {meta.finding}, {meta.keywords}")
+    
+    canonical_finding, field_type = find_valid_labels(
+        finding=meta.finding,
+        chroma_snapshot=_chroma_snapshot,
+        logger=logger,
+        cutoff=0.6,
     )
-    if not section_docs:
+    
+    if not canonical_finding:
         return None
 
-    actual_section = section_docs[0].metadata.get("subsection", "")
-    parent_section = section_docs[0].metadata.get("section", "")
-
-    if parent_section:
-        # Retrieve siblings (same parent) AND the parent section doc itself
+    # If the label appears as both a section and subsection, use an $or filter
+    if field_type == "both":
         return {
-            "$or": [
-                {"section": {"$eq": parent_section}},
-                {"subsection": {"$eq": parent_section}},
-            ]
+            "section": {"$eq": canonical_finding},
         }
-    if actual_section:
-        # Top-level section: retrieve it and all its children
-        return {
-            "$or": [
-                {"subsection": {"$eq": actual_section}},
-                {"section":    {"$eq": actual_section}},
-            ]
-        }
-    return None
+    
+    # Otherwise, filter strictly by the specific field it belongs to
+    return {field_type: {"$eq": canonical_finding}}
 
 
 def _apply_metadata_filter(
@@ -203,13 +196,16 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     # 1. Derive metadata filter + augment query with extracted keywords
     search_filter = _build_section_filter(query)
 
+    print(f"Search filter: {search_filter}")
+    
     # Re-extract keywords to append to the query (improves both indexes)
     sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
-    prompt = _QUERY_METADATA_PROMPT.format(query=query, sections=sections)
+    system_prompt = _QUERY_METADATA_PROMPT.format(sections=sections)
     try:
-        meta: QueryMetadata = _metadata_extractor.invoke(
-            [{"role": "user", "content": prompt}]
-        )
+        meta: QueryMetadata = _metadata_extractor.invoke([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ])
         if meta.keywords:
             query = query + " " + " ".join(meta.keywords)
     except Exception:
@@ -217,20 +213,27 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
 
     # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF → rerank
     try:
+        # --- HYBRID SEARCH AND RERANKER DEACTIVATED ---
+        # dense_results = _vectorstore.similarity_search_with_relevance_scores(
+        #     query=query, k=HYBRID_K, filter=search_filter
+        # )
+        # dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
+
+        # sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
+        # sparse_hits = _apply_metadata_filter(sparse_raw, search_filter)
+
+        # fused   = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
+        # rrf_docs = [doc for doc, _ in fused]
+        # docs     = rerank(query, rrf_docs, top_n=TOP_K)
+
+        # --- OLD RETRIEVE ---
         dense_results = _vectorstore.similarity_search_with_relevance_scores(
-            query=query, k=HYBRID_K, filter=search_filter
+            query=query, k=TOP_K, filter=search_filter
         )
-        dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
-
-        sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
-        sparse_hits = _apply_metadata_filter(sparse_raw, search_filter)
-
-        fused   = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
-        rrf_docs = [doc for doc, _ in fused]
-        docs     = rerank(query, rrf_docs, top_n=TOP_K)
+        docs = [doc for doc, score in dense_results if score >= 0.0]
 
     except Exception:
-        logger.exception("Hybrid retrieval failed; falling back to dense-only.")
+        logger.exception("Retrieval failed; falling back to simple retrieve.")
         docs = _vectorstore.as_retriever().invoke(query)
 
     serialized = "\n\n".join(
