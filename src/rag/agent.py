@@ -29,7 +29,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
@@ -43,7 +43,7 @@ from src.rag.config import (
     TOP_K,
 )
 from src.rag.reranker import rerank
-
+from src.utils import get_sections
 
 logger = logging.getLogger(__name__)
 
@@ -72,84 +72,83 @@ _bm25_index.build([
 ])
 
 # ---------------------------------------------------------------------------
-# Metadata filter — keyword vocabulary (no LLM)
+# Metadata extraction (query → section + keywords)
 # ---------------------------------------------------------------------------
 
-# Maps known section names to trigger words (lowercase, Spanish + English).
-# When a match is found the filter narrows to docs in that section/subsection.
-_SECTION_KEYWORDS: dict[str, list[str]] = {
-    "Espazo Nature": ["espazo nature", "que es espazo", "espazo"],
-    "Alojamientos":  ["villa", "casa", "apartamento", "cabaña", "glamping",
-                     "habitacion", "alojamiento", "dormir", "estancia", "cama",
-                     "accommodation", "room", "cabin"],
-    "Servicios":     ["restaurante", "masaje", "yoga", "taller", "servicio",
-                     "restaurant", "massage", "service"],
-    "Entorno":       ["playa", "laguna", "naturaleza", "entorno", "zona",
-                     "baldaio", "razo", "costa da morte", "senderismo",
-                     "beach", "nature", "surroundings"],
-    "BONOS":         ["bono", "bonos", "regalo", "voucher", "gift"],
-}
-
-# Maps entity_type values to trigger words.
-_ENTITY_KEYWORDS: dict[str, list[str]] = {
-    "alojamiento": ["villa", "casa", "apartamento", "cabaña", "glamping",
-                   "habitacion", "alojamiento", "dormir", "estancia"],
-    "servicio":    ["restaurante", "masaje", "yoga", "taller", "servicio"],
-    "entorno":     ["playa", "laguna", "naturaleza", "entorno",
-                   "baldaio", "razo", "costa da morte"],
-    "actividad":   ["surf", "senderismo", "kayak", "actividad", "ruta",
-                   "caballo", "paseo", "actividades"],
-}
-
-# Maps content_type values to trigger words.
-_CONTENT_KEYWORDS: dict[str, list[str]] = {
-    "precio":    ["precio", "coste", "cuanto", "€", "euro", "tarifa",
-                 "cuesta", "vale", "cost", "price", "how much"],
-    "normas":    ["norma", "regla", "politica", "check-in", "checkout",
-                 "mascota", "permitido", "prohibido", "cancelacion",
-                 "policy", "rules", "allowed", "pet"],
-    "ubicacion": ["donde", "ubicacion", "llegar", "distancia", "como ir",
-                 "situado", "location", "where", "directions"],
-    "faqs":      ["pregunta", "faq", "duda", "consulta"],
-}
+_QUERY_METADATA_PROMPT = (
+    "Extract 'keywords' from the user question to filter a vector database.\n"
+    "Compare them to the following list of sections: {sections}. "
+    "If the question clearly relates to one of these sections, save it to 'finding'. "
+    "If none of the sections are clearly relevant, save 'none' to 'finding'.\n"
+    "CRITICAL: Keep all proper nouns and keywords exactly as they appear in the "
+    "original language. Do not translate them to English.\n"
+    "Question: {query}"
+)
 
 
-def _keyword_filter(query: str) -> dict | None:
+class QueryMetadata(BaseModel):
+    """Structured output used to filter the vector store before retrieval."""
+
+    finding: str = Field(
+        description="The specific section mentioned in the query, or 'none' if none."
+    )
+    keywords: list[str] = Field(
+        description=(
+            "Proper nouns or keywords extracted from the query in their ORIGINAL "
+            "language. DO NOT translate them."
+        )
+    )
+
+
+_metadata_extractor = _llm.with_structured_output(QueryMetadata)
+
+
+def _build_section_filter(query: str) -> dict | None:
     """
-    Build a Chroma ``$where`` filter from the query using keyword vocabulary.
-    Returns ``None`` when no keywords match (→ no pre-filtering).
+    Run the metadata extractor to derive a Chroma $where filter from the query.
+
+    Returns None if no relevant section is found or on any error.
     """
-    q = query.lower()
-    clauses: list[dict] = []
-
-    # ── Section clause ────────────────────────────────────────────────────
-    for section, kws in _SECTION_KEYWORDS.items():
-        if any(kw in q for kw in kws):
-            clauses.append({
-                "$or": [
-                    {"section":    {"$eq": section}},
-                    {"subsection": {"$eq": section}},
-                ]
-            })
-            break   # one section at most
-
-    # ── entity_type clause ───────────────────────────────────────────────
-    for entity_type, kws in _ENTITY_KEYWORDS.items():
-        if any(kw in q for kw in kws):
-            clauses.append({"entity_type": {"$eq": entity_type}})
-            break
-
-    # ── content_type clause ──────────────────────────────────────────────
-    for content_type, kws in _CONTENT_KEYWORDS.items():
-        if any(kw in q for kw in kws):
-            clauses.append({"content_type": {"$eq": content_type}})
-            break
-
-    if not clauses:
+    sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
+    prompt = _QUERY_METADATA_PROMPT.format(query=query, sections=sections)
+    try:
+        meta: QueryMetadata = _metadata_extractor.invoke(
+            [{"role": "user", "content": prompt}]
+        )
+    except Exception:
+        logger.exception("Metadata extraction failed for query: %r", query)
         return None
-    if len(clauses) == 1:
-        return clauses[0]
-    return {"$and": clauses}
+
+    if not meta.finding or meta.finding.lower() in ("none", ""):
+        return None
+
+    # Fuzzy-match the section name against Chroma to get the canonical value
+    section_docs = _vectorstore.similarity_search(
+        meta.finding, k=1, filter={"subsection": {"$eq": meta.finding}}
+    )
+    if not section_docs:
+        return None
+
+    actual_section = section_docs[0].metadata.get("subsection", "")
+    parent_section = section_docs[0].metadata.get("section", "")
+
+    if parent_section:
+        # Retrieve siblings (same parent) AND the parent section doc itself
+        return {
+            "$or": [
+                {"section": {"$eq": parent_section}},
+                {"subsection": {"$eq": parent_section}},
+            ]
+        }
+    if actual_section:
+        # Top-level section: retrieve it and all its children
+        return {
+            "$or": [
+                {"subsection": {"$eq": actual_section}},
+                {"section":    {"$eq": actual_section}},
+            ]
+        }
+    return None
 
 
 def _apply_metadata_filter(
@@ -201,45 +200,34 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     Returns both a serialised string (for the LLM context) and the raw
     Document objects (artifact, for downstream use).
     """
-    # 1. Build metadata filter from keyword vocabulary (no LLM call).
-    search_filter = _keyword_filter(query)
-    #print("==========================================")
-    #print(f"search_filter: {search_filter}")
-    #print("==========================================")
+    # 1. Derive metadata filter + augment query with extracted keywords
+    search_filter = _build_section_filter(query)
 
+    # Re-extract keywords to append to the query (improves both indexes)
+    sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
+    prompt = _QUERY_METADATA_PROMPT.format(query=query, sections=sections)
+    try:
+        meta: QueryMetadata = _metadata_extractor.invoke(
+            [{"role": "user", "content": prompt}]
+        )
+        if meta.keywords:
+            query = query + " " + " ".join(meta.keywords)
+    except Exception:
+        logger.warning("Keyword augmentation failed; using original query.")
 
     # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF → rerank
     try:
-        dense_results = _vectorstore.similarity_search_with_score(
+        dense_results = _vectorstore.similarity_search_with_relevance_scores(
             query=query, k=HYBRID_K, filter=search_filter
         )
-        # Use similarity_search_with_score to avoid LangChain's [0,1] bounds warning.
-        # RRF only cares about rank ordering anyway, so the raw distances are fine.
-        dense_hits = [(doc, score) for doc, score in dense_results]
-        #print(f"\n── Dense hits ({len(dense_hits)}) ──────────────────────────────")
-        #for doc, score in dense_hits:
-        #    print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
+        dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
 
         sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
-        #print(f"\n── Sparse hits raw ({len(sparse_raw)}) ───────────────")
-        #for doc, score in sparse_raw:
-        #    print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
         sparse_hits = _apply_metadata_filter(sparse_raw, search_filter)
-        #print(f"\n── Sparse hits after filter ({len(sparse_hits)}) ───────────────")
-        #for doc, score in sparse_hits:
-        #    print(f"  [{score:.3f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
 
-        fused    = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
+        fused   = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
         rrf_docs = [doc for doc, _ in fused]
-        #print(f"\n── RRF fused → rerank pool ({len(rrf_docs)}) ───────────────────")
-        #for doc, score in fused:
-        #    print(f"  [{score:.4f}] {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
-
-        docs = rerank(query, rrf_docs, top_n=TOP_K)
-        #print(f"\n── Final docs after rerank ({len(docs)}) ───────────────────────")
-        #for doc in docs:
-        #    print(f"  {doc.metadata.get('section','?')} / {doc.metadata.get('subsection','?')} | {doc.page_content[:80]!r}")
-        #print("────────────────────────────────────────────────────────────\n")
+        docs     = rerank(query, rrf_docs, top_n=TOP_K)
 
     except Exception:
         logger.exception("Hybrid retrieval failed; falling back to dense-only.")
