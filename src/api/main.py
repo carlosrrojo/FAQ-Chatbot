@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from flask import Flask, request
 
 from src.rag.agent import generate_reply
-from src.rag.ingest import DATA_PATH
+from src.rag.config import DATA_PATH
 from src.rag.watcher import start_watcher
 from src.api.whatsapp import WhatsAppClient
 

@@ -136,20 +136,12 @@ def divide_into_sections(fitz_doc: fitz.Document, docs: list[Document]) -> list[
         docs.append(Document(page_content=current_section["text"].strip(), metadata=metadata))
     return docs
 
-<<<<<<< HEAD
 def get_siblings(section : str, chunks: list[Document]) -> list[str]:
-=======
-def get_siblings(section : str, chunks: list[Document]):
->>>>>>> 759b663 (Merge + upgrades)
     siblings = set()
     for c in chunks:
         if section == c.metadata["section"]:
             siblings.add(c.metadata["subsection"])
-<<<<<<< HEAD
     return list(siblings)
-=======
-    return siblings
->>>>>>> 759b663 (Merge + upgrades)
 
 
 if __name__ == "__main__":

@@ -134,11 +134,6 @@ REGLAS ESTRICTAS:
 ESQUEMA JSON A DEVOLVER:
 {{
   "entity_type":         "<servicio|alojamiento|entorno|actividad|general>",
-<<<<<<< HEAD
-=======
-  "section":             "<sección principal, e.g. alojamientos, servicios, entorno>",
-  "subsection":          "<nombre específico del elemento, e.g. gran_villa, surf_school>",
->>>>>>> 759b663 (Merge + upgrades)
   "content_type":        "<descripcion|precio|normas|servicios|ubicacion|faqs>",
   "accommodation_type":  "<villa|apartamento|casa|cabaña|glamping|null>",
   "capacity":            ["<N_personas>"],
@@ -271,11 +266,6 @@ class MetadataExtractor:
 
         entity_type = self._str(data.get("entity_type"), "general")
         meta = ExtractedMetadata(
-<<<<<<< HEAD
-=======
-            section            = self._str(data.get("section")),
-            subsection         = self._str(data.get("subsection")),
->>>>>>> 759b663 (Merge + upgrades)
             content_type       = self._str(data.get("content_type"), "descripcion"),
             accommodation_type = self._nullable_str(data.get("accommodation_type")),
             capacity           = self._list(data.get("capacity")),
@@ -348,11 +338,7 @@ def enrich_document(
     doc,                          # LangChain Document
     extractor: MetadataExtractor,
     entity_id: Optional[str] = None,
-<<<<<<< HEAD
     extras: Optional[list[str]] = None,
-=======
-    extras: Optional[dict] = None,
->>>>>>> 759b663 (Merge + upgrades)
 ) -> None:
     """
     Enrich a LangChain Document in-place with extracted metadata.
@@ -364,17 +350,10 @@ def enrich_document(
         entity_id = entity_id or doc.metadata.get("entity_id"),
     )
     siblings = "\n".join(extras)
-<<<<<<< HEAD
     if len(extras) > 1:
         doc.page_content = f"""
         {doc.page_content}
         [{doc.metadata["section"]}]:
-=======
-    if "section" in extracted:
-        doc.page_content = f"""
-        {doc.page_content}
-        [{extracted["section"]}]:
->>>>>>> 759b663 (Merge + upgrades)
         {siblings}
         """
     doc.metadata.update(extracted)
