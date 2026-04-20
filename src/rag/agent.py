@@ -79,8 +79,9 @@ _bm25_index.build([
 _QUERY_METADATA_PROMPT = (
     "Extract 'keywords' from the user question to filter a vector database.\n"
     "Compare them to the following list of sections: {sections}. "
-    "If the question clearly relates to one of these sections, save it to 'finding'. "
-    "If none of the sections are clearly relevant, save 'none' to 'finding'.\n"
+    "If the question CLEARLY AND EXPLICITLY relates to one of these sections, save it to 'finding'. "
+    "If it does not explicitly mention them or clearly relate, you MUST save 'none' to 'finding'.\n"
+    "CRITICAL: Default to 'none' if you are unsure.\n"
     "CRITICAL: Keep all proper nouns and keywords exactly as they appear in the "
     "original language. Do not translate them to English.\n"
 )
@@ -122,7 +123,7 @@ def _build_section_filter(query: str) -> dict | None:
 
     if not meta.finding or meta.finding.lower() in ("none", ""):
         return None
-    print(f"metadata: {meta.finding}, {meta.keywords}")
+    #print(f"metadata: {meta.finding}, {meta.keywords}")
     
     canonical_finding, field_type = find_valid_labels(
         finding=meta.finding,
@@ -195,8 +196,7 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     """
     # 1. Derive metadata filter + augment query with extracted keywords
     search_filter = _build_section_filter(query)
-
-    print(f"Search filter: {search_filter}")
+    #print(f"Search filter: {search_filter}")
     
     # Re-extract keywords to append to the query (improves both indexes)
     sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
@@ -206,31 +206,44 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": query}
         ])
-        if meta.keywords:
-            query = query + " " + " ".join(meta.keywords)
+        #if meta.keywords:
+            #query = query + " " + " ".join(meta.keywords)
     except Exception:
         logger.warning("Keyword augmentation failed; using original query.")
 
-    # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF → rerank
+    # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF
+    #    Dense uses a "soft boost": fetch with AND without the filter,
+    #    then deduplicate keeping the best score. Filtered matches rank
+    #    higher naturally, but unfiltered relevant docs aren't excluded.
     try:
-        # --- HYBRID SEARCH AND RERANKER DEACTIVATED ---
-        # dense_results = _vectorstore.similarity_search_with_relevance_scores(
-        #     query=query, k=HYBRID_K, filter=search_filter
-        # )
-        # dense_hits = [(doc, score) for doc, score in dense_results if score >= 0.0]
-
-        # sparse_raw  = _bm25_index.search(query, k=HYBRID_K)
-        # sparse_hits = _apply_metadata_filter(sparse_raw, search_filter)
-
-        # fused   = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
-        # rrf_docs = [doc for doc, _ in fused]
-        # docs     = rerank(query, rrf_docs, top_n=TOP_K)
-
-        # --- OLD RETRIEVE ---
-        dense_results = _vectorstore.similarity_search_with_relevance_scores(
-            query=query, k=TOP_K, filter=search_filter
+        # --- Dense: unfiltered (broad recall) ---
+        unfiltered = _vectorstore.similarity_search_with_relevance_scores(
+            query=query, k=HYBRID_K,
         )
-        docs = [doc for doc, score in dense_results if score >= 0.0]
+
+        # --- Dense: filtered (section boost) ---
+        if search_filter:
+            filtered = _vectorstore.similarity_search_with_relevance_scores(
+                query=query, k=HYBRID_K, filter=search_filter,
+            )
+        else:
+            filtered = []
+
+        # Merge: deduplicate by page_content, keep the higher score
+        seen: dict[str, tuple[Document, float]] = {}
+        for doc, score in list(filtered) + list(unfiltered):
+            if score < 0.0:
+                continue
+            key = doc.page_content
+            if key not in seen or score > seen[key][1]:
+                seen[key] = (doc, score)
+        dense_hits = sorted(seen.values(), key=lambda x: x[1], reverse=True)[:HYBRID_K]
+
+        # --- Sparse (BM25) — no hard filter either ---
+        sparse_hits = _bm25_index.search(query, k=HYBRID_K)
+
+        fused = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=TOP_K)
+        docs  = [doc for doc, _ in fused]
 
     except Exception:
         logger.exception("Retrieval failed; falling back to simple retrieve.")

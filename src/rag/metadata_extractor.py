@@ -350,12 +350,12 @@ def enrich_document(
         text      = doc.page_content,
         entity_id = entity_id or doc.metadata.get("entity_id"),
     )
-    siblings = "\n".join(extras)
+    hijos = "\n".join(extras)
     if len(extras) > 1:
         doc.page_content = f"""
         {doc.page_content}
         [{doc.metadata["section"]}]:
-        {siblings}
+        {hijos}
         """
     doc.metadata.update(extracted)
 

@@ -4,12 +4,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
-from src.rag.processor import parse_doc, get_siblings
+from src.rag.processor import parse_doc, get_children
 from src.rag.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
-# from processor import add_metadata_keyBERT
 
-CHUNK_SIZE      = 800
-CHUNK_OVERLAP   = 200
+CHUNK_SIZE      = 1024
+CHUNK_OVERLAP   = 256
 
 # 1. Load each PDF and split into sections using headings
 docs: list[Document] = []
@@ -30,13 +29,12 @@ print(f"Splited into {len(chunks)} chunks.")
 # 3. Extract metadata with LLM
 extractor = MetadataExtractor(MODEL_NAME)
 for i, chunk in enumerate(chunks):
-    extras = get_siblings(chunk.metadata["section"], chunks)
+    extras = get_children(chunk.metadata["section"], chunks)
     # Seed base metadata preserved from your existing schema
     chunk.metadata.setdefault("page", chunk.metadata.get("page", 0))
     chunk.metadata["index_start"] = i * (CHUNK_SIZE - CHUNK_OVERLAP)
     chunk.metadata["entity_id"]   = None
     enrich_document(chunk, extractor, None, extras)
-#chunks = add_metadata_keyBERT(chunks)
 print(f"Added extra metadata to documents. Current chunks: {len(chunks)}")
 
 # 4. Embed and persist to vector store

@@ -64,7 +64,7 @@ def _clean_content(text: str) -> str:
     return text.strip()
 
 def divide_into_sections(fitz_doc: fitz.Document, docs: list[Document]) -> list[Document]:
-    current_section = {"section":"","subsection": "Espazo Nature", "text": "", "page_start": 0}
+    current_section = {"section":"Espazo Nature","parent_section": "", "text": "", "page_start": 0}
     font_sizes = []  # stack: {"section_name": ..., "size": ...}
 
     # Find sections by heading fontsize and bold flag
@@ -104,7 +104,7 @@ def divide_into_sections(fitz_doc: fitz.Document, docs: list[Document]) -> list[
                 if current_section["text"].strip():
                     # Save the previous section as a LangChain Document
                     metadata = {}
-                    metadata.update({"section":current_section["section"],"subsection": current_section["subsection"], "page": current_section["page_start"]})
+                    metadata.update({"section":current_section["section"],"parent_section": current_section["parent_section"], "page": current_section["page_start"]})
                     docs.append(Document(page_content=current_section["text"].strip(), metadata=metadata))
 
                 # Find the nearest ancestor heading (smallest size still larger than current)
@@ -121,8 +121,8 @@ def divide_into_sections(fitz_doc: fitz.Document, docs: list[Document]) -> list[
                 font_sizes.append({"section_name": text, "size": max_font_size})
 
                 current_section = {
-                    "section": parent_section_name,
-                    "subsection": text,
+                    "parent_section": parent_section_name,
+                    "section": text,
                     "text": "",
                     "page_start": page_num,
                 }
@@ -132,16 +132,16 @@ def divide_into_sections(fitz_doc: fitz.Document, docs: list[Document]) -> list[
     # Append the final section
     if current_section["text"].strip():
         metadata = {}
-        metadata.update({"section":current_section["section"],"subsection": current_section["subsection"], "page": current_section["page_start"]})
+        metadata.update({"section":current_section["section"],"parent_section": current_section["parent_section"], "page": current_section["page_start"]})
         docs.append(Document(page_content=current_section["text"].strip(), metadata=metadata))
     return docs
 
-def get_siblings(section : str, chunks: list[Document]) -> list[str]:
-    siblings = set()
+def get_children(section : str, chunks: list[Document]) -> list[str]:
+    children = set()
     for c in chunks:
-        if section == c.metadata["section"]:
-            siblings.add(c.metadata["subsection"])
-    return list(siblings)
+        if section == c.metadata["parent_section"]:
+            children.add(c.metadata["section"])
+    return list(children)
 
 
 if __name__ == "__main__":

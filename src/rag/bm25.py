@@ -99,6 +99,23 @@ def reciprocal_rank_fusion(
     k           : RRF smoothing constant   (default 60)
     top_n       : number of results to return after fusion
     """
+    # ── DEBUG: Dense retriever results ──
+    print("\n" + "=" * 70)
+    print("🔍  DENSE RETRIEVER (Chroma) — %d hits" % len(dense_hits))
+    print("-" * 70)
+    for rank, (doc, score) in enumerate(dense_hits, start=1):
+        snippet = doc.page_content[:120].replace("\n", " ")
+        print(f"  [{rank:>2}] score={score:.4f}  | {snippet}…")
+    print()
+
+    # ── DEBUG: Sparse retriever results ──
+    print("📝  SPARSE RETRIEVER (BM25) — %d hits" % len(sparse_hits))
+    print("-" * 70)
+    for rank, (doc, score) in enumerate(sparse_hits, start=1):
+        snippet = doc.page_content[:120].replace("\n", " ")
+        print(f"  [{rank:>2}] score={score:.4f}  | {snippet}…")
+    print()
+
     scores: dict[str, float]   = {}
     docs:   dict[str, Document] = {}
 
@@ -116,4 +133,14 @@ def reciprocal_rank_fusion(
 
     # Normalise fused scores to [0, 1]
     max_score = ranked[0][1] if ranked else 1.0
-    return [(docs[key], round(score / max_score, 4)) for key, score in ranked]
+    fused = [(docs[key], round(score / max_score, 4)) for key, score in ranked]
+
+    # ── DEBUG: Final fused results ──
+    print("🏆  RRF FUSED RESULTS — top %d" % top_n)
+    print("-" * 70)
+    for rank, (doc, score) in enumerate(fused, start=1):
+        snippet = doc.page_content[:120].replace("\n", " ")
+        print(f"  [{rank:>2}] rrf_score={score:.4f}  | {snippet}…")
+    print("=" * 70 + "\n")
+
+    return fused
