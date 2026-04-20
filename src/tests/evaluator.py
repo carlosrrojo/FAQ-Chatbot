@@ -9,14 +9,18 @@ Evaluates the retrieve → generate pipeline using four metrics:
 """
 
 from sqlalchemy.orm.collections import collection
+import argparse
 import json
+import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
 
 from benchmarks.eval_data import DATA
@@ -122,13 +126,18 @@ def calculate_context_precision(
 # Main evaluator
 # ---------------------------------------------------------------------------
 
-def run_evaluator(collection: str = "Espazo Nature") -> None:
+def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama") -> None:
     print(f"\n{'='*44}")
     print(f"Collection: {collection}")
+    print(f"Evaluator LLM: {evaluator}")
     print(f"{'='*44}")
 
-    model      = ChatOllama(model="llama3.1")
-    embeddings = OllamaEmbeddings(model="llama3.1")
+    if evaluator == "gemini":
+        model      = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    else:
+        model      = ChatOllama(model="llama3.1")
+        embeddings = OllamaEmbeddings(model="llama3.1")
 
     results: dict[str, list[float]] = {
         "faithfulness":    [],
@@ -156,6 +165,10 @@ def run_evaluator(collection: str = "Espazo Nature") -> None:
         cp_score = calculate_context_precision(question, ground_truth, retrieved_docs, model)
         cr_score = calculate_context_recall(question, ground_truth, contexts, model)
 
+        # Throttle API calls to avoid Gemini rate limits
+        if evaluator == "gemini":
+            time.sleep(5)
+
         print(f"\nQ{idx+1}/{len(EVAL_DATA)}: {question} |F: {f_score:.2f} | AR: {ar_score:.2f} | CP: {cp_score:.2f} | CR: {cr_score:.2f}")
         #print(f"\nQ{idx+1}/{len(EVAL_DATA)}: {question}")
         print("=======================================================")
@@ -180,8 +193,13 @@ def run_evaluator(collection: str = "Espazo Nature") -> None:
 
 if __name__ == "__main__":
     load_dotenv()
-    sizes = [(512, 64),(800,100),(1024, 256)]
-    """for c_s, c_o in sizes:
-        collection = f"metadata_espazo_nature_{c_s}_{c_o}"""
-    collection = "metadata_NoHybrid_NoRerank_1024"
-    run_evaluator(collection)
+
+    parser = argparse.ArgumentParser(description="RAG Evaluation harness")
+    parser.add_argument(
+        "--evaluator", choices=["ollama", "gemini"], default="ollama",
+        help="LLM to use as evaluator judge (default: ollama)",
+    )
+    args = parser.parse_args()
+
+    collection = "metadata_NoRerank_1024"
+    run_evaluator(collection, evaluator=args.evaluator)
