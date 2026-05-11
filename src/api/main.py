@@ -15,6 +15,7 @@ from src.rag.agent import generate_reply
 from src.rag.config import DATA_PATH
 from src.rag.watcher import start_watcher
 from src.api.whatsapp import WhatsAppClient
+from src.api.instagram import InstagramClient
 
 from src.logging_config import configure_logging
 
@@ -30,6 +31,11 @@ app = Flask(__name__)
 # ── Clients ───────────────────────────────────────────────────────────────────
 whatsapp = WhatsAppClient(
     phone_number_id=os.environ["WA_PHONE_NUMBER_ID"],
+    access_token=os.environ["META_ACCESS_TOKEN"],
+)
+
+instagram = InstagramClient(
+    page_id=os.environ["IG_PAGE_ID"],
     access_token=os.environ["META_ACCESS_TOKEN"],
 )
 
@@ -138,10 +144,16 @@ def _handle_instagram(data: dict) -> None:
             if "text" in msg:
                 user_text = msg["text"]
                 logger.info("[IG] DM from %s: %s", sender_id, user_text)
-                generate_reply("instagram", user_text, sender_id)
-
-            elif "attachments" in msg:
-                logger.info("[IG] Attachment from %s (unsupported)", sender_id)
+                reply = generate_reply("instagram", user_text, sender_id)
+                instagram.send_text(to=sender_id, text=reply)
+            else:
+                logger.info(
+                    "[IG] Unsupported message type from %s", sender_id
+                )
+                instagram.send_text(
+                    to=sender_id,
+                    text="Sorry, I can only process text messages at the moment.",
+                )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
