@@ -1,6 +1,8 @@
-
 import time
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -26,7 +28,7 @@ class IngestHandler(FileSystemEventHandler):
         if not event.src_path.endswith(valid_extensions):
             return
 
-        print(f"Detected change in {event.src_path} ({event.event_type}). Scheduling reload...")
+        logger.info("Detected change in %s (%s). Scheduling reload...", event.src_path, event.event_type)
         self.debounce_ingest()
 
     def on_created(self, event):
@@ -50,17 +52,17 @@ class IngestHandler(FileSystemEventHandler):
 
     def trigger_ingest(self):
         with self.ingest_lock:
-            print("\nChange detected in documents. Reloading database...")
+            logger.info("Change detected in documents. Reloading database...")
             try:
                 subprocess.run([sys.executable, "-m", "src.rag.ingest"], check=True)
-                print("Database reload complete.\n")
+                logger.info("Database reload complete.")
             except Exception as e:
-                print(f"Error reloading database: {e}")
+                logger.error("Error reloading database: %s", e)
 
 def start_watcher(path):
     event_handler = IngestHandler()
     observer = Observer()
     observer.schedule(event_handler, path, recursive=False)
     observer.start()
-    print(f"Started watching {path} for changes...")
+    logger.info("Started watching %s for changes...", path)
     return observer

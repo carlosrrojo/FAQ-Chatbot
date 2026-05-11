@@ -6,6 +6,11 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from src.rag.processor import parse_doc, get_children
 from src.rag.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
+from src.logging_config import configure_logging
+import logging
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 CHUNK_SIZE      = 1024
 CHUNK_OVERLAP   = 256
@@ -14,7 +19,7 @@ CHUNK_OVERLAP   = 256
 docs: list[Document] = []
 for pdf_path in glob_module.glob(f"{DATA_PATH}/*.pdf"):
     docs.extend(parse_doc(pdf_path))
-print(f"Loaded {len(docs)} documents.")
+logger.info("Loaded %d documents.", len(docs))
 
 # 2. Split into chunks (tune chunk_size to your doc type)
 splitter = RecursiveCharacterTextSplitter(
@@ -24,7 +29,7 @@ splitter = RecursiveCharacterTextSplitter(
 )
 
 chunks = splitter.split_documents(docs)
-print(f"Splited into {len(chunks)} chunks.")
+logger.info("Splited into %d chunks.", len(chunks))
 
 # 3. Extract metadata with LLM
 extractor = MetadataExtractor(MODEL_NAME)
@@ -35,7 +40,7 @@ for i, chunk in enumerate(chunks):
     chunk.metadata["index_start"] = i * (CHUNK_SIZE - CHUNK_OVERLAP)
     chunk.metadata["entity_id"]   = None
     enrich_document(chunk, extractor, None, extras)
-print(f"Added extra metadata to documents. Current chunks: {len(chunks)}")
+logger.info("Added extra metadata to documents. Current chunks: %d", len(chunks))
 
 # 4. Embed and persist to vector store
 embeddings = OllamaEmbeddings(model=MODEL_NAME)
@@ -45,6 +50,6 @@ vectorstore = Chroma(
     persist_directory=DB_PATH,
 )
 
-print(f"ingested to: {COLLECTION} in {DB_PATH}")
+logger.info("ingested to: %s in %s", COLLECTION, DB_PATH)
 document_ids = vectorstore.add_documents(chunks)
-print(f"Stored {len(document_ids)} documents using {CHUNK_SIZE}/{CHUNK_OVERLAP} split.")
+logger.info("Stored %d documents using %d/%d split.", len(document_ids), CHUNK_SIZE, CHUNK_OVERLAP)

@@ -23,7 +23,7 @@ class WhatsAppClient:
     # ── Send plain text ───────────────────────────────────────────────────────
     def send_text(self, to: str, text: str) -> dict:
         """Send a plain text message to a WhatsApp number."""
-        print(f"Sending message to: {to}")
+        logger.info("Sending message to: %s", to)
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",

@@ -46,6 +46,8 @@ from src.rag.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
 from src.utils import get_sections
 
+from src.logging_config import configure_logging
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -123,7 +125,7 @@ def _build_section_filter(query: str) -> dict | None:
 
     if not meta.finding or meta.finding.lower() in ("none", ""):
         return None
-    #print(f"metadata: {meta.finding}, {meta.keywords}")
+    #logger.debug("metadata: %s, %s", meta.finding, meta.keywords)
     
     canonical_finding, field_type = find_valid_labels(
         finding=meta.finding,
@@ -196,7 +198,7 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     """
     # 1. Derive metadata filter + augment query with extracted keywords
     search_filter = _build_section_filter(query)
-    #print(f"Search filter: {search_filter}")
+    #logger.debug("Search filter: %s", search_filter)
     
     # Re-extract keywords to append to the query (improves both indexes)
     sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
@@ -344,14 +346,15 @@ def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
 if __name__ == "__main__":
     import sys
 
-    print("RAG Agent — interactive mode. Type 'exit' or 'quit' to quit.\n")
+    configure_logging()
+    logger.info("RAG Agent — interactive mode. Type 'exit' or 'quit' to quit.")
     thread = "local-test"
 
     while True:
         try:
             user_input = input("Cliente: ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nBye!")
+            logger.info("Bye!")
             sys.exit(0)
 
         if user_input.lower() in ("exit", "quit", ""):

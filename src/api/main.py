@@ -16,13 +16,12 @@ from src.rag.config import DATA_PATH
 from src.rag.watcher import start_watcher
 from src.api.whatsapp import WhatsAppClient
 
+from src.logging_config import configure_logging
+
 load_dotenv()
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # ── Flask app ─────────────────────────────────────────────────────────────────

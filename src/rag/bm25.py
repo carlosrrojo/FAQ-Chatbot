@@ -1,6 +1,9 @@
+from typing import Optional
+import logging
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Hybrid search
@@ -100,21 +103,21 @@ def reciprocal_rank_fusion(
     top_n       : number of results to return after fusion
     """
     # ── DEBUG: Dense retriever results ──
-    print("\n" + "=" * 70)
-    print("🔍  DENSE RETRIEVER (Chroma) — %d hits" % len(dense_hits))
-    print("-" * 70)
+    logger.debug("\n" + "=" * 70)
+    logger.debug("🔍  DENSE RETRIEVER (Chroma) — %d hits", len(dense_hits))
+    logger.debug("-" * 70)
     for rank, (doc, score) in enumerate(dense_hits, start=1):
         snippet = doc.page_content[:120].replace("\n", " ")
-        print(f"  [{rank:>2}] score={score:.4f}  | {snippet}…")
-    print()
+        logger.debug("  [%2d] score=%.4f  | %s…", rank, score, snippet)
+    logger.debug("")
 
     # ── DEBUG: Sparse retriever results ──
-    print("📝  SPARSE RETRIEVER (BM25) — %d hits" % len(sparse_hits))
-    print("-" * 70)
+    logger.debug("📝  SPARSE RETRIEVER (BM25) — %d hits", len(sparse_hits))
+    logger.debug("-" * 70)
     for rank, (doc, score) in enumerate(sparse_hits, start=1):
         snippet = doc.page_content[:120].replace("\n", " ")
-        print(f"  [{rank:>2}] score={score:.4f}  | {snippet}…")
-    print()
+        logger.debug("  [%2d] score=%.4f  | %s…", rank, score, snippet)
+    logger.debug("")
 
     scores: dict[str, float]   = {}
     docs:   dict[str, Document] = {}
@@ -136,11 +139,11 @@ def reciprocal_rank_fusion(
     fused = [(docs[key], round(score / max_score, 4)) for key, score in ranked]
 
     # ── DEBUG: Final fused results ──
-    print("🏆  RRF FUSED RESULTS — top %d" % top_n)
-    print("-" * 70)
+    logger.debug("🏆  RRF FUSED RESULTS — top %d", top_n)
+    logger.debug("-" * 70)
     for rank, (doc, score) in enumerate(fused, start=1):
         snippet = doc.page_content[:120].replace("\n", " ")
-        print(f"  [{rank:>2}] rrf_score={score:.4f}  | {snippet}…")
-    print("=" * 70 + "\n")
+        logger.debug("  [%2d] rrf_score=%.4f  | %s…", rank, score, snippet)
+    logger.debug("=" * 70 + "\n")
 
     return fused

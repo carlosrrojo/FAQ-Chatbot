@@ -1,5 +1,8 @@
 from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document
+import logging
+
+logger = logging.getLogger(__name__)
 
 RERANK_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 
@@ -24,11 +27,11 @@ def rerank(
     scores  = encoder.predict(pairs)          # shape: (len(docs),)
     ranked  = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
 
-    print("🏆  RERANK RESULTS — top %d" % top_n)
-    print("-" * 70)
+    logger.debug("🏆  RERANK RESULTS — top %d", top_n)
+    logger.debug("-" * 70)
     for rank, (doc, score) in enumerate(ranked, start=1):
         snippet = doc.page_content[:120].replace("\n", " ")
-        print(f"  [{rank:>2}] rerank_score={score:.4f}  | {snippet}…")
-    print("=" * 70 + "\n")
+        logger.debug("  [%2d] rerank_score=%.4f  | %s…", rank, score, snippet)
+    logger.debug("=" * 70 + "\n")
     
     return [doc for doc, _ in ranked[:top_n]]

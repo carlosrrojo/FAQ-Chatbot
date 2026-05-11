@@ -1,6 +1,8 @@
-
 from langchain_core.documents import Document
-import fitz
+import pymupdf as fitz
+import logging
+
+logger = logging.getLogger(__name__)
 
 def parse_doc(document_path: str) -> list[Document]:
     """Open a PDF by path with fitz and split it into section-level Documents.
@@ -13,7 +15,7 @@ def parse_doc(document_path: str) -> list[Document]:
     try:
         fitz_doc = fitz.open(document_path)
     except Exception as e:
-        print(f"Error opening {document_path} with PyMuPDF: {e}")
+        logger.error("Error opening %s with PyMuPDF: %s", document_path, e)
         return new_docs
         
     # Divide the document into sections
@@ -149,9 +151,9 @@ if __name__ == "__main__":
     #doc2 = "/home/carlos/Documents/personal/UDC/TFG/a-practical-guide-to-building-agents.pdf"
     docs = parse_doc(doc1)
     for doc in docs:
-        print("======================")
-        print(doc.metadata)
-        print("*******************")
-        print(get_siblings(doc.metadata["section"], docs))
-        print("===================\n")
+        logger.debug("======================")
+        logger.debug(doc.metadata)
+        logger.debug("*******************")
+        # logger.debug(get_siblings(doc.metadata["section"], docs))
+        logger.debug("===================\n")
         #print(doc.page_content)

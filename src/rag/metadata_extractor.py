@@ -42,6 +42,9 @@ import json
 import re
 import uuid
 import difflib
+import logging
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -418,8 +421,8 @@ if __name__ == "__main__":
     extractor = MetadataExtractor()
     record    = extractor.extract(text=sample, entity_id="2312")
 
-    print("=== EntityRecord ===")
-    print(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))
+    logger.info("=== EntityRecord ===")
+    logger.info(json.dumps(record.to_dict(), ensure_ascii=False, indent=2))
 
-    print("\n=== LangChain metadata (flat, Chroma-ready) ===")
-    print(json.dumps(record.to_langchain_metadata(), ensure_ascii=False, indent=2))
+    logger.info("\n=== LangChain metadata (flat, Chroma-ready) ===")
+    logger.info(json.dumps(record.to_langchain_metadata(), ensure_ascii=False, indent=2))
