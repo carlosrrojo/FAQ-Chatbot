@@ -23,4 +23,12 @@ def rerank(
     pairs   = [(query, doc.page_content) for doc in docs]
     scores  = encoder.predict(pairs)          # shape: (len(docs),)
     ranked  = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+
+    print("🏆  RERANK RESULTS — top %d" % top_n)
+    print("-" * 70)
+    for rank, (doc, score) in enumerate(ranked, start=1):
+        snippet = doc.page_content[:120].replace("\n", " ")
+        print(f"  [{rank:>2}] rerank_score={score:.4f}  | {snippet}…")
+    print("=" * 70 + "\n")
+    
     return [doc for doc, _ in ranked[:top_n]]

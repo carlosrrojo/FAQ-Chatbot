@@ -242,8 +242,9 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         # --- Sparse (BM25) — no hard filter either ---
         sparse_hits = _bm25_index.search(query, k=HYBRID_K)
 
-        fused = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=TOP_K)
-        docs  = [doc for doc, _ in fused]
+        fused = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=RERANK_K)
+        rrf_docs = [doc for doc, _ in fused]
+        docs     = rerank(query, rrf_docs, top_n=TOP_K)
 
     except Exception:
         logger.exception("Retrieval failed; falling back to simple retrieve.")
