@@ -4,7 +4,8 @@ import os
 import threading
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from src.rag.ingest import ingest_docs
+import subprocess
+import sys
 
 # Debounce time in seconds
 DEBOUNCE_DELAY = 2.0
@@ -51,7 +52,7 @@ class IngestHandler(FileSystemEventHandler):
         with self.ingest_lock:
             print("\nChange detected in documents. Reloading database...")
             try:
-                ingest_docs(clear_db=True)
+                subprocess.run([sys.executable, "-m", "src.rag.ingest"], check=True)
                 print("Database reload complete.\n")
             except Exception as e:
                 print(f"Error reloading database: {e}")
