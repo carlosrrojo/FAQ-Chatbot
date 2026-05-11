@@ -2,14 +2,9 @@ from typing import Optional
 import logging
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
+from src.config import RRF_K, TOP_K
 
 logger = logging.getLogger(__name__)
-
-
-# Hybrid search
-HYBRID_K          = 20    # candidates fetched from each index before RRF merge
-RRF_K             = 60    # RRF smoothing constant (standard default)
-TOP_K             = 4     # final chunks returned after fusion
 
 # ---------------------------------------------------------------------------
 # BM25Index — sparse keyword index kept in sync with Chroma
