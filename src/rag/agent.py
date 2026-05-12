@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
-from src.rag.config import (
+from src.config import (
     COLLECTION,
     DB_PATH,
     HYBRID_K,
@@ -42,7 +42,7 @@ from src.rag.config import (
     RRF_K,
     TOP_K,
 )
-from src.rag.reranker import rerank
+from src.infraestructure.retrieval.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
 from src.utils import get_sections
 
