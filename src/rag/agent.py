@@ -34,6 +34,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
+from src.infraestructure.memory.sqlite_adapter import SqliteMemoryAdapter
 from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
 from src.config import (
     COLLECTION,
@@ -322,7 +323,7 @@ def build_graph(checkpointer=None):
     return workflow.compile(checkpointer=checkpointer or MemorySaver())
 
 
-rag_agent = build_graph()
+rag_agent = None
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +348,10 @@ def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
     Returns:
         A plain-text reply to send back to the customer.
     """
+    global rag_agent
+    if rag_agent is None:
+        rag_agent = build_graph(checkpointer=SqliteMemoryAdapter().get_checkpointer())
+    
     logger.info("Generating reply | platform=%s sender=%s", platform, sender_id)
 
     result = rag_agent.invoke(
