@@ -18,7 +18,9 @@ Public API
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Annotated
+from langchain_core._api import deprecated
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -296,27 +298,42 @@ def _call_model(state: AgentState) -> dict:
 # Graph assembly
 # ---------------------------------------------------------------------------
 
-_workflow = StateGraph(AgentState)
+def build_graph(checkpointer=None):
+    """
+    Assembles and compiles the RAG agent graph.
 
-_workflow.add_node("call_model", _call_model)
-_workflow.add_node("retrieve",   ToolNode([retrieve_documents]))
+    Args:
+        checkpointer: Optional LangGraph checkpointer for persistence.
+                      If None, a default MemorySaver is used.
+    """
+    workflow = StateGraph(AgentState)
 
-_workflow.add_edge(START, "call_model")
-_workflow.add_conditional_edges(
-    "call_model",
-    tools_condition,       # routes to "retrieve" if tool_calls present, else END
-    {"tools": "retrieve", END: END},
-)
-_workflow.add_edge("retrieve", "call_model")   # loop back after retrieval
+    workflow.add_node("call_model", _call_model)
+    workflow.add_node("retrieve",   ToolNode([retrieve_documents]))
 
-_memory   = MemorySaver()
-rag_agent = _workflow.compile(checkpointer=_memory)
+    workflow.add_edge(START, "call_model")
+    workflow.add_conditional_edges(
+        "call_model",
+        tools_condition,
+        {"tools": "retrieve", END: END},
+    )
+    workflow.add_edge("retrieve", "call_model")
+
+    return workflow.compile(checkpointer=checkpointer or MemorySaver())
+
+
+rag_agent = build_graph()
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
+@deprecated(
+    since="1.1.0",
+    message="Use src.domain.orchestrator.RAGOrchestrator instead.",
+    removal="2.0.0",
+)
 def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
     """
     Generate a reply for an incoming customer message.
