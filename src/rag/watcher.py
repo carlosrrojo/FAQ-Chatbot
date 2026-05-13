@@ -59,7 +59,7 @@ class IngestHandler(FileSystemEventHandler):
             except Exception as e:
                 logger.error("Error reloading database: %s", e)
 
-def start_watcher(path):
+def start_watcher(on_reingest_callback, path):
     event_handler = IngestHandler()
     observer = Observer()
     observer.schedule(event_handler, path, recursive=False)
