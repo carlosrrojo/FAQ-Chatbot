@@ -1,14 +1,14 @@
 # src/domain/ports.py
 from abc import ABC, abstractmethod
 from typing import Optional
-from .models import ChatRequest, ChatResponse, RetrievedDocument
+from .models import ChatRequest, ChatResponse, RetrievedContext
 
 
 class IRetriever(ABC):
     """Port: document retrieval. Implemented by HybridRetriever."""
 
     @abstractmethod
-    def retrieve(self, query: str) -> list[RetrievedDocument]:
+    def retrieve(self, query: str) -> list[RetrievedContext]:
         """Return top-K reranked documents for the given query."""
         ...
 

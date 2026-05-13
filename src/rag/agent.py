@@ -34,7 +34,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from src.infraestructure.memory.sqlite_adapter import SqliteMemoryAdapter
+from src.infraestructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
 from src.config import (
     COLLECTION,

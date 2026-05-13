@@ -45,7 +45,7 @@ class MessageType(str, Enum):
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class IncomingMessage:
+class ChatRequest:
     """
     Platform-agnostic representation of a message received from a user.
 
@@ -69,7 +69,7 @@ class IncomingMessage:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class BotReply:
+class ChatResponse:
     """
     The chatbot's response to an incoming message.
 
