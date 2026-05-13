@@ -34,7 +34,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
-from src.infraestructure.memory.sqlite_memory import SqliteMemoryAdapter
+from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
 from src.config import (
     COLLECTION,
@@ -45,7 +45,7 @@ from src.config import (
     RRF_K,
     TOP_K,
 )
-from src.infraestructure.retrieval.reranker import rerank
+from src.infrastructure.retrieval.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
 from src.utils import get_sections
 
