@@ -5,9 +5,11 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from src.rag.processor import parse_doc, get_children
-from src.rag.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
+from src.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
 from src.logging_config import configure_logging
+from src.utils import stable_id
 import logging
+import chromadb
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -49,6 +51,19 @@ vectorstore = Chroma(
     embedding_function=embeddings,
     persist_directory=DB_PATH,
 )
+
+client = chromadb.PersistentClient(path=DB_PATH)
+try:
+    client.delete_collection(COLLECTION)
+    logger.info("Deleted existing collection '%s' before re-ingestion.", COLLECTION)
+except Exception:
+    pass   # Collection may not exist on first run
+
+
+# Assigning stable content-derive IDs [CHECK BEFORE USING]:
+ids = [stable_id(chunk.page_content, chunk.metadata) for chunk in chunks]
+vectorstore.add_documents(chunks, ids=ids)
+
 
 logger.info("ingested to: %s in %s", COLLECTION, DB_PATH)
 document_ids = vectorstore.add_documents(chunks)

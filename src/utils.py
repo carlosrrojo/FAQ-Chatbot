@@ -1,7 +1,7 @@
 import os
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
-
+import hashlib
 
 BENCHMARK_DIR = "benchmarks"
 
@@ -24,3 +24,9 @@ def get_sections(
         if meta and "section" in meta:
             sections.add(meta["section"])
     return sections
+
+
+def stable_id(content: str, metadata: dict) -> str:
+    """SHA-256 of content + section metadata = stable, collision-resistant ID."""
+    key = content + metadata.get("section", "") + metadata.get("parent_section", "")
+    return hashlib.sha256(key.encode()).hexdigest()[:32]
