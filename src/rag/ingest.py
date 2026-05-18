@@ -63,11 +63,8 @@ except Exception:
 
 # Assigning stable content-derive IDs [CHECK BEFORE USING]:
 ids = [stable_id(chunk.page_content, chunk.metadata) for chunk in chunks]
-vectorstore.add_documents(chunks, ids=ids)
-
-
 logger.info("ingested to: %s in %s", COLLECTION, DB_PATH)
-document_ids = vectorstore.add_documents(chunks)
+document_ids = vectorstore.add_documents(chunks, ids=ids)
 logger.info("Stored %d documents using %d/%d split.", len(document_ids), CHUNK_SIZE, CHUNK_OVERLAP)
 
 write_manifest(source_files=glob_module.glob(f"{DATA_PATH}/*.pdf"), chunks_per_file=chunks)

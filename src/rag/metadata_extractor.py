@@ -163,6 +163,19 @@ JSON:"""
 
 
 # ---------------------------------------------------------------------------
+# Reference Vocabulary for Validation
+# ---------------------------------------------------------------------------
+
+VOCABULARY = {
+    "entity_type":        ["servicio", "alojamiento", "entorno", "actividad", "general"],
+    "content_type":       ["descripcion", "precio", "normas", "servicios", "ubicacion", "faqs"],
+    "accommodation_type": ["villa", "apartamento", "casa", "cabaña", "glamping"],
+    "environment":        ["playa", "naturaleza", "rural", "montaña", "bosque", "costa", "ria"],
+    "target_audience":    ["familias", "parejas", "grupos", "adultos", "niños", "mascotas", "surf"]
+}
+
+
+# ---------------------------------------------------------------------------
 # MetadataExtractor
 # ---------------------------------------------------------------------------
 
@@ -269,16 +282,31 @@ class MetadataExtractor:
             data = {}   # full fallback — all fields → defaults
 
         entity_type = self._str(data.get("entity_type"), "general")
+        entity_type = self._fuzzy_match(entity_type, VOCABULARY["entity_type"]) or "general"
+
+        content_type = self._str(data.get("content_type"), "descripcion")
+        content_type = self._fuzzy_match(content_type, VOCABULARY["content_type"]) or "descripcion"
+
+        accommodation_type = self._nullable_str(data.get("accommodation_type"))
+        if accommodation_type:
+            accommodation_type = self._fuzzy_match(accommodation_type, VOCABULARY["accommodation_type"])
+
+        environment = self._list(data.get("environment"))
+        environment = self._fuzzy_match_list(environment, VOCABULARY["environment"])
+
+        target_audience = self._list(data.get("target_audience"))
+        target_audience = self._fuzzy_match_list(target_audience, VOCABULARY["target_audience"])
+
         meta = ExtractedMetadata(
-            content_type       = self._str(data.get("content_type"), "descripcion"),
-            accommodation_type = self._nullable_str(data.get("accommodation_type")),
+            content_type       = content_type,
+            accommodation_type = accommodation_type,
             capacity           = self._list(data.get("capacity")),
             features           = self._list(data.get("features")),
             services           = self._list(data.get("services")),
             location           = self._list(data.get("location")),
-            environment        = self._list(data.get("environment")),
+            environment        = environment,
             activities         = self._list(data.get("activities")),
-            target_audience    = self._list(data.get("target_audience")),
+            target_audience    = target_audience,
         )
         return EntityRecord(
             entity_id   = entity_id,
@@ -332,6 +360,26 @@ class MetadataExtractor:
                 for v in value.split(",") if v.strip()
             ]
         return []
+
+    @staticmethod
+    def _fuzzy_match(value: str | None, possibilities: list[str], cutoff: float = 0.6) -> str | None:
+        """Fuzzy match a single string against a list of possibilities."""
+        if not value:
+            return None
+        matches = difflib.get_close_matches(value, possibilities, n=1, cutoff=cutoff)
+        return matches[0] if matches else value
+
+    @staticmethod
+    def _fuzzy_match_list(values: list[str], possibilities: list[str], cutoff: float = 0.6) -> list[str]:
+        """Fuzzy match a list of strings against possibilities."""
+        result = []
+        for v in values:
+            matches = difflib.get_close_matches(v, possibilities, n=1, cutoff=cutoff)
+            result.append(matches[0] if matches else v)
+        # Deduplicate after matching while preserving order
+        seen = set()
+        return [x for x in result if not (x in seen or seen.add(x))]
+
 
 
 # ---------------------------------------------------------------------------
