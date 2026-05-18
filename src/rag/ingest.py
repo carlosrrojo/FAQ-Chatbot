@@ -6,7 +6,7 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from src.rag.processor import parse_doc, get_children
-from src.config import MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
+from src.config import CHUNK_SIZE, CHUNK_OVERLAP, MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
 from src.logging_config import configure_logging
 from src.utils import stable_id
 import logging
@@ -14,9 +14,6 @@ import chromadb
 
 configure_logging()
 logger = logging.getLogger(__name__)
-
-CHUNK_SIZE      = 1024
-CHUNK_OVERLAP   = 256
 
 # 1. Load each PDF and split into sections using headings
 docs: list[Document] = []
@@ -62,10 +59,13 @@ vectorstore = Chroma(
 )
 
 
-# Assigning stable content-derive IDs [CHECK BEFORE USING]:
+# Assigning stable content-derive IDs for indempotent ingestion:
 ids = [stable_id(chunk.page_content, chunk.metadata) for chunk in chunks]
 logger.info("ingested to: %s in %s", COLLECTION, DB_PATH)
 document_ids = vectorstore.add_documents(chunks, ids=ids)
 logger.info("Stored %d documents using %d/%d split.", len(document_ids), CHUNK_SIZE, CHUNK_OVERLAP)
 
-write_manifest(source_files=glob_module.glob(f"{DATA_PATH}/*.pdf"), chunks_per_file=chunks)
+# Build per-file chunk counts
+source_files = glob_module.glob(f"{DATA_PATH}/*.pdf")
+chunks_per_file = {f: sum(1 for c in chunks if c.metadata.get("source") == f) for f in source_files}
+write_manifest(source_files=source_files, chunks_per_file=chunks_per_file)
