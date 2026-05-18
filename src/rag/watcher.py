@@ -15,10 +15,11 @@ DEBOUNCE_DELAY = 2.0
 class IngestHandler(FileSystemEventHandler):
 
 
-    def __init__(self):
+    def __init__(self, on_reingest_callback=None):
         self.timer = None
         self.lock = threading.Lock()
         self.ingest_lock = threading.Lock()
+        self.on_reingest_callback = on_reingest_callback
 
     def _process_event(self, event):
         if event.is_directory:
@@ -56,11 +57,14 @@ class IngestHandler(FileSystemEventHandler):
             try:
                 subprocess.run([sys.executable, "-m", "src.rag.ingest"], check=True)
                 logger.info("Database reload complete.")
+                if self.on_reingest_callback:
+                    logger.info("Triggering reingest callback to rebuild BM25 index...")
+                    self.on_reingest_callback()
             except Exception as e:
                 logger.error("Error reloading database: %s", e)
 
 def start_watcher(on_reingest_callback, path):
-    event_handler = IngestHandler()
+    event_handler = IngestHandler(on_reingest_callback)
     observer = Observer()
     observer.schedule(event_handler, path, recursive=False)
     observer.start()

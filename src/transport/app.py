@@ -1,6 +1,8 @@
 # src/transport/app.py
 import logging
+import os
 from flask import Flask
+from src.config import DATA_PATH
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.infrastructure.channels.whatsapp_client import WhatsAppClient
 from src.infrastructure.channels.instagram_client import InstagramClient
@@ -44,8 +46,12 @@ def create_app() -> Flask:
     # Start file watcher (FR-ING-05)
     # The retriever singleton is accessible via the orchestrator's internal agent
     # Watcher callback will call retriever.rebuild_index()
-    start_watcher(on_reingest_callback=orchestrator._retriever.rebuild_index
-                  if hasattr(orchestrator, '_retriever') else None)
+    abs_data_path = os.path.abspath(DATA_PATH)
+    os.makedirs(abs_data_path, exist_ok=True)
+    start_watcher(
+        on_reingest_callback=orchestrator._retriever.rebuild_index if hasattr(orchestrator, '_retriever') else None,
+        path=abs_data_path
+    )
 
     logger.info("FAQ-Chatbot application started.")
     return app

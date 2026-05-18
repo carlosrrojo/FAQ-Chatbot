@@ -46,7 +46,7 @@ _observer = None
 try:
     abs_data_path = os.path.abspath(DATA_PATH)
     os.makedirs(abs_data_path, exist_ok=True)
-    _observer = start_watcher(abs_data_path)
+    _observer = start_watcher(None, abs_data_path)
     logger.info("Document watcher started on %s", abs_data_path)
 except Exception:
     logger.exception("Failed to start document watcher")
