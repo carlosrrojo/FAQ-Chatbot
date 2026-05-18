@@ -31,6 +31,9 @@ RELEVANCE_THRESHOLD: float = -5.0    # FR-AGT-04: cross-encoder OOS threshold
 # ── Keyword augmentation ──────────────────────────────────────────────────────
 KEYWORD_AUGMENTATION_ENABLED: bool = False   # FR-RET-06: explicit off by default
 
+# ── Metadata filtering ────────────────────────────────────────────────────────
+FILTER_CONFIDENCE_THRESHOLD: float = 0.6     # Min fuzzy match score to apply section filter
+
 # ── Memory / session ─────────────────────────────────────────────────────────
 MAX_HISTORY_TURNS: int = 20    # FR-MEM-03: sliding window (turns = user+assistant pairs)
 SESSION_TTL_DAYS: int = 30     # FR-PRV-01: data retention policy

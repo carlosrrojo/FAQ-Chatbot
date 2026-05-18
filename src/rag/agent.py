@@ -43,6 +43,7 @@ from src.config import (
     MODEL_NAME,
     RRF_K,
     TOP_K,
+    FILTER_CONFIDENCE_THRESHOLD,
 )
 from src.infrastructure.retrieval.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
@@ -148,15 +149,20 @@ def _build_section_filter(query: str) -> dict | None:
         return None
     #logger.debug("metadata: %s, %s", meta.finding, meta.keywords)
     
-    canonical_finding, field_type = find_valid_labels(
+    canonical_finding, field_type, match_score = find_valid_labels(
         finding=meta.finding,
         chroma_snapshot=_chroma_snapshot,
         logger=logger,
-        cutoff=0.6,
     )
     
-    if not canonical_finding:
+    if not canonical_finding or match_score < FILTER_CONFIDENCE_THRESHOLD:
+        logger.info(
+            "Skipping metadata filter: best match '%s' for extracted '%s' scored %.2f (threshold: %.2f)",
+            canonical_finding, meta.finding, match_score, FILTER_CONFIDENCE_THRESHOLD
+        )
         return None
+
+    logger.info("Applying metadata filter: '%s' (score: %.2f)", canonical_finding, match_score)
 
     # If the label appears as both a section and subsection, use an $or filter
     if field_type == "both":

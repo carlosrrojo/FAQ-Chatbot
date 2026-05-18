@@ -415,11 +415,12 @@ def enrich_document(
 # Label validation helper
 # ---------------------------------------------------------------------------
 
-def find_valid_labels(finding: str, chroma_snapshot: dict, logger=None, cutoff: float = 0.6) -> tuple[str | None, str | None]:
+def find_valid_labels(finding: str, chroma_snapshot: dict, logger=None) -> tuple[str | None, str | None, float]:
     """
     Ensure the extracted finding actually exists in the collection as a section or subsection.
-    Uses difflib for fuzzy matching. Returns a tuple (canonical_label, field_type) where 
-    field_type is 'section', 'subsection', or 'both'. Returns (None, None) if not found.
+    Uses difflib for fuzzy matching. Returns a tuple (canonical_label, field_type, match_score)
+    where field_type is 'section', 'subsection', or 'both', and match_score is the similarity [0.0, 1.0].
+    Returns (None, None, 0.0) if not found.
     """
 
     valid_labels: dict[str, set[str]] = {}
@@ -436,21 +437,32 @@ def find_valid_labels(finding: str, chroma_snapshot: dict, logger=None, cutoff: 
     finding_lower = finding.lower()
     
     canonical = None
+    score = 0.0
+    
     if finding_lower in label_map:
         canonical = label_map[finding_lower]
+        score = 1.0
     else:
-        matches = difflib.get_close_matches(finding_lower, label_map.keys(), n=1, cutoff=cutoff)
-        if matches:
-            canonical = label_map[matches[0]]
+        best_match = None
+        best_score = 0.0
+        for label in label_map.keys():
+            s = difflib.SequenceMatcher(None, finding_lower, label).ratio()
+            if s > best_score:
+                best_score = s
+                best_match = label
+        
+        if best_match:
+            canonical = label_map[best_match]
+            score = best_score
             
     if canonical:
         fields = valid_labels[canonical]
         field_type = "both" if len(fields) > 1 else next(iter(fields))
-        return canonical, field_type
+        return canonical, field_type, score
     
     if logger:
         logger.warning("Metadata finding '%s' not present in collection labels.", finding)
-    return None, None
+    return None, None, 0.0
 
 
 # ---------------------------------------------------------------------------
