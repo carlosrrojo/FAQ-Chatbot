@@ -25,8 +25,7 @@ CHUNK_OVERLAP: int = 256
 # ── Retrieval pipeline hyperparameters ────────────────────────────────────────────────────────
 HYBRID_K = 20  # candidates fetched from each index (dense + sparse) before RRF
 RRF_K    = 60  # RRF smoothing constant (standard default)
-RERANK_K = 8   # pool size passed to the cross-encoder reranker
-TOP_K    = 3   # final chunks returned to the LLM after reranking
+TOP_K    = 3   # documents returned by the cross-encoder reranker (final stage) to the LLM
 RELEVANCE_THRESHOLD: float = -5.0    # FR-AGT-04: cross-encoder OOS threshold
 
 # ── Keyword augmentation ──────────────────────────────────────────────────────
