@@ -47,11 +47,6 @@ logger.info("Added extra metadata to documents. Current chunks: %d", len(chunks)
 
 # 4. Embed and persist to vector store
 embeddings = OllamaEmbeddings(model=MODEL_NAME)
-vectorstore = Chroma(
-    collection_name=COLLECTION,
-    embedding_function=embeddings,
-    persist_directory=DB_PATH,
-)
 
 client = chromadb.PersistentClient(path=DB_PATH)
 try:
@@ -59,6 +54,12 @@ try:
     logger.info("Deleted existing collection '%s' before re-ingestion.", COLLECTION)
 except Exception:
     pass   # Collection may not exist on first run
+
+vectorstore = Chroma(
+    collection_name=COLLECTION,
+    embedding_function=embeddings,
+    persist_directory=DB_PATH,
+)
 
 
 # Assigning stable content-derive IDs [CHECK BEFORE USING]:
