@@ -1,6 +1,7 @@
 from rank_bm25 import BM25Okapi
 from src.config import HYBRID_K
 from langchain_chroma import Chroma
+import regex
 import threading
 import logging
 
@@ -15,6 +16,20 @@ class BM25Retriever:
         self._build()
 
     
+    @staticmethod
+    def _tokenise(text: str) -> list[str]:
+        """
+        Unicode-aware tokeniser for Spanish/Galician text.
+        Strips leading/trailing punctuation so accented words like
+        '¿habitación?' are correctly reduced to 'habitación'.
+        """
+        tokens = []
+        for tok in text.lower().split():
+            tok = regex.sub(r'^\p{P}+|\p{P}+$', '', tok)
+            if tok:
+                tokens.append(tok)
+        return tokens
+
     def _build(self) -> None:
         """Internal: construct the index from the current ChromaDB state."""
         collection = self._vectorstore.get()
@@ -23,7 +38,7 @@ class BM25Retriever:
         if not self._docs:
             logger.warning("BM25Retriever: ChromaDB collection is empty.")
             return
-        tokenised = [doc.lower().split() for doc in self._docs]
+        tokenised = [self._tokenise(doc) for doc in self._docs]
         self._index = BM25Okapi(tokenised)
         self._metadatas = metadatas
         logger.info("BM25 index built: %d documents.", len(self._docs))
@@ -47,7 +62,7 @@ class BM25Retriever:
             if self._index is None or not self._docs:
                 logger.warning("BM25Retriever: index not available, returning empty.")
                 return []
-            tokens = query.lower().split()
+            tokens = self._tokenise(query)
             scores = self._index.get_scores(tokens)
             max_score = max(scores) if max(scores) > 0 else 1.0
             normalised = scores / max_score

@@ -77,6 +77,25 @@ _bm25_index.build([
     )
 ])
 
+
+def rebuild_bm25() -> None:
+    """
+    Rebuild the module-level BM25 index from the current ChromaDB state.
+    Called by the file watcher (FR-ING-05) after a successful re-ingestion
+    so that the sparse index stays in sync with the updated vector store.
+    """
+    global _chroma_snapshot
+    logger.info("Rebuilding BM25 index after re-ingestion...")
+    _chroma_snapshot = _vectorstore.get()
+    _bm25_index.build([
+        Document(page_content=text, metadata=meta)
+        for text, meta in zip(
+            _chroma_snapshot["documents"],
+            _chroma_snapshot["metadatas"],
+        )
+    ])
+    logger.info("BM25 index rebuilt: %d documents.", len(_chroma_snapshot["documents"]))
+
 # ---------------------------------------------------------------------------
 # Metadata extraction (query → section + keywords)
 # ---------------------------------------------------------------------------

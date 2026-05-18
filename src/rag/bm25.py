@@ -1,5 +1,6 @@
 from typing import Optional
 import logging
+import regex
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 from src.config import RRF_K, TOP_K
@@ -66,7 +67,18 @@ class BM25Index:
 
     @staticmethod
     def _tokenise(text: str) -> list[str]:
-        return text.lower().split()
+        """
+        Unicode-aware tokeniser for Spanish/Galician text.
+        - Lowercases and splits on whitespace
+        - Strips leading/trailing punctuation from each token
+        - Drops empty tokens and pure-punctuation tokens
+        """
+        tokens = []
+        for tok in text.lower().split():
+            tok = regex.sub(r'^\p{P}+|\p{P}+$', '', tok)
+            if tok:
+                tokens.append(tok)
+        return tokens
 
 
 

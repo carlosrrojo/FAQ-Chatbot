@@ -10,6 +10,7 @@ from src.domain.orchestrator import RAGOrchestrator
 from src.transport.webhook_controller import webhook_bp
 from src.infrastructure.retrieval.hybrid_retriever import HybridRetriever
 from src.rag.watcher import start_watcher
+from src.rag.agent import rebuild_bm25
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +45,12 @@ def create_app() -> Flask:
     app.register_blueprint(webhook_bp)
 
     # Start file watcher (FR-ING-05)
-    # The retriever singleton is accessible via the orchestrator's internal agent
-    # Watcher callback will call retriever.rebuild_index()
+    # After re-ingestion, rebuild the BM25 sparse index to stay in sync
+    # with the updated ChromaDB collection (FR-RET-02 criterion 3).
     abs_data_path = os.path.abspath(DATA_PATH)
     os.makedirs(abs_data_path, exist_ok=True)
     start_watcher(
-        on_reingest_callback=orchestrator._retriever.rebuild_index if hasattr(orchestrator, '_retriever') else None,
+        on_reingest_callback=rebuild_bm25, # CHECK
         path=abs_data_path
     )
 
