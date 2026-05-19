@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class BM25Retriever:
     def __init__(self, vectorstore: Chroma) -> None:
-        self.vectorstore = vectorstore
+        self._vectorstore = vectorstore
         self._lock = threading.RLock()
         self._docs : list = []
         self._index: BM25Okapi | None = None

@@ -31,7 +31,7 @@ from langdetect import detect as _detect_lang, LangDetectException
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, RemoveMessage
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
@@ -42,7 +42,8 @@ from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
-from src.rag.bm25 import BM25Index, reciprocal_rank_fusion
+from src.infrastructure.retrieval.bm25_retriever import BM25Retriever
+from src.infrastructure.retrieval.hybrid_retriever import _reciprocal_rank_fusion
 from src.config import (
     COLLECTION,
     DB_PATH,
@@ -52,6 +53,7 @@ from src.config import (
     TOP_K,
     FILTER_CONFIDENCE_THRESHOLD,
     TRANSLATE_CONTEXT_ENABLED,
+    MAX_HISTORY_TURNS,
 )
 from src.infrastructure.retrieval.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
@@ -75,15 +77,8 @@ _vectorstore = Chroma(
 )
 
 # Build BM25 index from the same documents that are in Chroma
-_bm25_index = BM25Index()
+_bm25_index = BM25Retriever(_vectorstore)
 _chroma_snapshot = _vectorstore.get()
-_bm25_index.build([
-    Document(page_content=text, metadata=meta)
-    for text, meta in zip(
-        _chroma_snapshot["documents"],
-        _chroma_snapshot["metadatas"],
-    )
-])
 
 
 def rebuild_bm25() -> None:
@@ -95,14 +90,7 @@ def rebuild_bm25() -> None:
     global _chroma_snapshot
     logger.info("Rebuilding BM25 index after re-ingestion...")
     _chroma_snapshot = _vectorstore.get()
-    _bm25_index.build([
-        Document(page_content=text, metadata=meta)
-        for text, meta in zip(
-            _chroma_snapshot["documents"],
-            _chroma_snapshot["metadatas"],
-        )
-    ])
-    logger.info("BM25 index rebuilt: %d documents.", len(_chroma_snapshot["documents"]))
+    _bm25_index.rebuild()
 
 # ---------------------------------------------------------------------------
 # Metadata extraction (query → section + keywords)
@@ -142,7 +130,7 @@ def _build_section_filter(query: str) -> dict | None:
 
     Returns None if no relevant section is found or on any error.
     """
-    sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
+    sections = ",".join(str(s) for s in get_sections(_vectorstore))
     system_prompt = _QUERY_METADATA_PROMPT.format(sections=sections)
     try:
         meta: QueryMetadata = _metadata_extractor.invoke([
@@ -236,7 +224,7 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     #logger.debug("Search filter: %s", search_filter)
     
     # Re-extract keywords to append to the query (improves both indexes)
-    sections = ",".join(str(s) for s in get_sections(_embeddings, _vectorstore))
+    sections = ",".join(str(s) for s in get_sections(_vectorstore))
     system_prompt = _QUERY_METADATA_PROMPT.format(sections=sections)
     try:
         meta: QueryMetadata = _metadata_extractor.invoke([
@@ -279,8 +267,7 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         # --- Sparse (BM25) — no hard filter either ---
         sparse_hits = _bm25_index.search(query, k=HYBRID_K)
 
-        fused = reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=HYBRID_K)
-        rrf_docs = [doc for doc, _ in fused]
+        rrf_docs = _reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=HYBRID_K)
         docs     = rerank(query, rrf_docs, top_n=TOP_K)
 
     except Exception:
@@ -375,6 +362,33 @@ def _call_model(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Memory management (FR-MEM-03)
+# ---------------------------------------------------------------------------
+
+def _manage_memory(state: AgentState) -> dict:
+    """
+    Enforces a sliding window of MAX_HISTORY_TURNS conversation turns.
+    Returns RemoveMessage objects for old messages to delete them from state.
+    """
+    messages = state["messages"]
+    
+    # Exclude SystemMessages just in case, though they aren't normally in state here
+    convo_msgs = [m for m in messages if m.__class__.__name__ != "SystemMessage"]
+    
+    max_messages = MAX_HISTORY_TURNS * 2   # pairs of (human, AI)
+    if len(convo_msgs) > max_messages:
+        to_remove = convo_msgs[:-max_messages]
+        logger.info(
+            "History truncated: %d → %d messages (removing %d oldest)",
+            len(convo_msgs), max_messages, len(to_remove)
+        )
+        return {"messages": [RemoveMessage(id=m.id) for m in to_remove if m.id]}
+        
+    return {"messages": []}
+
+
+
+# ---------------------------------------------------------------------------
 # Optional post-retrieval translation node  (Option C — FR-AGT-02)
 # ---------------------------------------------------------------------------
 
@@ -446,10 +460,12 @@ def build_graph(checkpointer=None):
     """
     workflow = StateGraph(AgentState)
 
+    workflow.add_node("manage_memory", _manage_memory)
     workflow.add_node("call_model", _call_model)
     workflow.add_node("retrieve",   ToolNode([retrieve_documents]))
 
-    workflow.add_edge(START, "call_model")
+    workflow.add_edge(START, "manage_memory")
+    workflow.add_edge("manage_memory", "call_model")
     workflow.add_conditional_edges(
         "call_model",
         tools_condition,

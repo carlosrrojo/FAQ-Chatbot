@@ -1,49 +1,86 @@
-from fastapi.testclient import TestClient
-from src.api.main import app
+from unittest.mock import patch, MagicMock
 import os
-from unittest.mock import patch
+import pytest
 
-client = TestClient(app)
-
-# Set env vars for testing
-os.environ["VERIFY_TOKEN"] = "MySecretToken"
-os.environ["WHATSAPP_API_TOKEN"] = "mock_token"
-os.environ["WHATSAPP_PHONE_NUMBER_ID"] = "mock_id"
+# Set environment variables for testing BEFORE importing create_app
+os.environ["WEBHOOK_VERIFY_TOKEN"] = "MySecretToken"
+os.environ["WA_PHONE_NUMBER_ID"] = "mock_id"
+os.environ["META_ACCESS_TOKEN"] = "mock_token"
 os.environ["INSTAGRAM_ACCESS_TOKEN"] = "mock_token"
 
-def test_whatsapp_verification():
+from src.transport.app import create_app
+
+
+@pytest.fixture
+def app():
+    # Patch adapters and background systems so they do not run real logic or start background threads
+    with patch("src.transport.app.SqliteMemoryAdapter"), \
+         patch("src.transport.app.WhatsAppClient") as mock_wa_cls, \
+         patch("src.transport.app.InstagramClient") as mock_ig_cls, \
+         patch("src.transport.app.RAGOrchestrator") as mock_orch_cls, \
+         patch("src.transport.app.start_watcher"):
+        
+        mock_wa = mock_wa_cls.return_value
+        mock_ig = mock_ig_cls.return_value
+        mock_orch = mock_orch_cls.return_value
+
+        app = create_app()
+        app.config.update({
+            "TESTING": True,
+            "WA_CLIENT": mock_wa,
+            "IG_CLIENT": mock_ig,
+            "ORCHESTRATOR": mock_orch,
+        })
+        yield app
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+def test_webhook_verification(client):
     # Test correct token
-    response = client.get("/whatsapp/webhook", params={
+    response = client.get("/webhook", query_string={
         "hub.mode": "subscribe",
         "hub.verify_token": "MySecretToken",
         "hub.challenge": "12345"
     })
     assert response.status_code == 200
-    assert response.text == "12345"
+    assert response.get_data(as_text=True) == "12345"
 
     # Test incorrect token
-    response = client.get("/whatsapp/webhook", params={
+    response = client.get("/webhook", query_string={
         "hub.mode": "subscribe",
         "hub.verify_token": "WrongToken",
         "hub.challenge": "12345"
     })
     assert response.status_code == 403
 
-def test_instagram_verification():
-    # Test correct token
-    response = client.get("/instagram/webhook", params={
-        "hub.mode": "subscribe",
-        "hub.verify_token": "MySecretToken",
-        "hub.challenge": "67890"
-    })
-    assert response.status_code == 200
-    assert response.text == "67890"
 
-@patch("src.api.whatsapp.ask_question")
-@patch("src.api.whatsapp.requests.post")
-def test_whatsapp_message_handling(mock_post, mock_ask):
-    mock_ask.return_value = "This is a mock answer."
-    mock_post.return_value.status_code = 200
+# SyncThread helper to run the background thread logic synchronously in the test
+class SyncThread:
+    def __init__(self, target, args=(), **kwargs):
+        self.target = target
+        self.args = args
+        self.kwargs = kwargs
+
+    def start(self):
+        self.target(*self.args)
+
+
+
+@patch("src.transport.webhook_controller.threading.Thread", new=SyncThread)
+def test_whatsapp_message_handling(client, app):
+    mock_orch = app.config["ORCHESTRATOR"]
+    mock_wa = app.config["WA_CLIENT"]
+
+    from src.domain.models import ChatResponse, Platform
+    mock_orch.generate_reply.return_value = ChatResponse(
+        text="This is a mock answer.",
+        sender_id="123456789",
+        platform=Platform.WHATSAPP
+    )
 
     payload = {
         "object": "whatsapp_business_account",
@@ -51,6 +88,7 @@ def test_whatsapp_message_handling(mock_post, mock_ask):
             "changes": [{
                 "value": {
                     "messages": [{
+                        "id": "msg_123",
                         "from": "123456789",
                         "type": "text",
                         "text": {"body": "Hello bot"}
@@ -60,14 +98,27 @@ def test_whatsapp_message_handling(mock_post, mock_ask):
         }]
     }
 
-    response = client.post("/whatsapp/webhook", json=payload)
+    response = client.post("/webhook", json=payload)
     assert response.status_code == 200
+    assert response.json == {"status": "accepted"}
 
-@patch("src.api.instagram.ask_question")
-@patch("src.api.instagram.requests.post")
-def test_instagram_message_handling(mock_post, mock_ask):
-    mock_ask.return_value = "This is a mock answer."
-    mock_post.return_value.status_code = 200
+    # Assertions
+    mock_wa.mark_as_read.assert_called_once_with("msg_123")
+    mock_orch.generate_reply.assert_called_once()
+    mock_wa.send_reply.assert_called_once()
+
+
+@patch("src.transport.webhook_controller.threading.Thread", new=SyncThread)
+def test_instagram_message_handling(client, app):
+    mock_orch = app.config["ORCHESTRATOR"]
+    mock_ig = app.config["IG_CLIENT"]
+
+    from src.domain.models import ChatResponse, Platform
+    mock_orch.generate_reply.return_value = ChatResponse(
+        text="This is a mock answer.",
+        sender_id="987654321",
+        platform=Platform.INSTAGRAM
+    )
 
     payload = {
         "object": "instagram",
@@ -79,5 +130,10 @@ def test_instagram_message_handling(mock_post, mock_ask):
         }]
     }
 
-    response = client.post("/instagram/webhook", json=payload)
+    response = client.post("/webhook", json=payload)
     assert response.status_code == 200
+    assert response.json == {"status": "accepted"}
+
+    # Assertions
+    mock_orch.generate_reply.assert_called_once()
+    mock_ig.send_reply.assert_called_once()

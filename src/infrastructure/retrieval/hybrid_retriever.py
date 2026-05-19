@@ -2,7 +2,7 @@ import logging
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from src.domain.ports import IRetriever
-from src.domain.models import RetrievedDocument
+from src.domain.models import RetrievedContext
 from src.config import HYBRID_K, RRF_K, TOP_K, RELEVANCE_THRESHOLD, KEYWORD_AUGMENTATION_ENABLED
 from .bm25_retriever import BM25Retriever
 from .reranker import rerank
@@ -57,7 +57,7 @@ class HybridRetriever(IRetriever):
         """Delegate to BM25 adapter. Called by watcher after re-ingestion."""
         self._bm25.rebuild()
 
-    def retrieve(self, query: str) -> list[RetrievedDocument]:
+    def retrieve(self, query: str) -> list[RetrievedContext]:
         try:
             return self._retrieve_internal(query)
         except Exception:
@@ -65,7 +65,7 @@ class HybridRetriever(IRetriever):
             docs = self._vs.as_retriever(search_kwargs={"k": TOP_K}).invoke(query)
             return [self._to_dto(doc, 0.0) for doc in docs]
 
-    def _retrieve_internal(self, query: str) -> list[RetrievedDocument]:
+    def _retrieve_internal(self, query: str) -> list[RetrievedContext]:
         from src.rag.agent import _build_section_filter   # temporary: refactor later
         metadata_filter = _build_section_filter(query)
 
@@ -120,12 +120,9 @@ class HybridRetriever(IRetriever):
         return query
 
     @staticmethod
-    def _to_dto(doc: Document, score: float) -> RetrievedDocument:
-        m = doc.metadata
-        return RetrievedDocument(
+    def _to_dto(doc: Document, score: float) -> RetrievedContext:
+        return RetrievedContext(
             content=doc.page_content,
+            metadata=doc.metadata,
             score=score,
-            section=m.get("section", ""),
-            parent_section=m.get("parent_section", ""),
-            page=m.get("page", 0),
         )

@@ -11,7 +11,6 @@ _encoder: CrossEncoder | None = None
 def get_encoder() -> CrossEncoder:
     global _encoder
     if _encoder is None:
-        logger.info("Loading cross-encoder model: %s", RERANK_MODEL)
         _encoder = CrossEncoder(RERANK_MODEL)
     return _encoder
 
