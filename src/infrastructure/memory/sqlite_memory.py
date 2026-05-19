@@ -15,7 +15,10 @@ class SqliteMemoryAdapter(IMemoryStore):
 
     def __init__(self, db_path: str = MEMORY_DB_PATH) -> None:
         self._db_path = db_path
-        self._checkpointer = SqliteSaver.from_conn_string(db_path)
+        # check_same_thread=False is required if requests handle concurrently
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._checkpointer = SqliteSaver(self._conn)
+        self._checkpointer.setup()  # Ensures the checkpoints tables are created
         logger.info("SqliteMemoryAdapter initialised at %s", db_path)
 
     def get_checkpointer(self) -> SqliteSaver:
