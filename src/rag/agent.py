@@ -358,6 +358,16 @@ def _call_model(state: AgentState) -> dict:
     lang_name = _LANG_NAMES.get(lang_code, lang_code.title())
     logger.debug("Detected user language: %s (%s)", lang_code, lang_name)
 
+    # FR-AGT-04: Out-of-scope fallback short-circuit
+    if state["messages"] and isinstance(state["messages"][-1], ToolMessage):
+        if not state["messages"][-1].content.strip():
+            from src.domain.orchestrator import _OOS_RESPONSES
+            from langchain_core.messages import AIMessage
+            
+            logger.info("No relevant documents found. Triggering OOS fallback response.")
+            reply_text = _OOS_RESPONSES.get(lang_code, _OOS_RESPONSES["es"])
+            return {"messages": [AIMessage(content=reply_text)]}
+
     prompt = _SYSTEM_PROMPT_TEMPLATE.format(response_language=lang_name)
     messages = [SystemMessage(content=prompt)] + state["messages"]
     response = _llm_with_tools.invoke(messages)
