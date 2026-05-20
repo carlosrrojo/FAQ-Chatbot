@@ -67,7 +67,14 @@ logger = logging.getLogger(__name__)
 # Shared infrastructure (initialised once at import time)
 # ---------------------------------------------------------------------------
 
-_llm        = ChatOllama(model=MODEL_NAME)
+import os
+
+if os.getenv("AGENT_LLM_PROVIDER", "ollama") == "gemini":
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    _llm = ChatGoogleGenerativeAI(model="gemini-flash-latest")
+else:
+    _llm = ChatOllama(model=MODEL_NAME)
+
 _embeddings = OllamaEmbeddings(model=MODEL_NAME)
 
 _vectorstore = Chroma(

@@ -49,14 +49,22 @@ class WhatsAppClient(IMessageChannel):
         Delivers the reply, splitting into multiple messages if the text
         exceeds WHATSAPP_MAX_CHARS (4096). FR-CHN-06.
         """
-        fragments = _split_at_sentence_boundary(response.text, WHATSAPP_MAX_CHARS)
-        if len(fragments) > 1:
-            logger.info("Response split into %d fragments for sender %s",
-                        len(fragments), response.sender_id[:6] + "***")
-        for fragment in fragments:
-            self._send_text(response.sender_id, fragment)
+        self._send_text(response.sender_id, response.text)
 
     def _send_text(self, to: str, text: str) -> None:
+        """
+        Sends text message, enforcing the WHATSAPP_MAX_CHARS (4096) character limit.
+        If the response exceeds the limit, it is split at sentence boundaries
+        and delivered as sequential messages in order.
+        """
+        fragments = _split_at_sentence_boundary(text, WHATSAPP_MAX_CHARS)
+        if len(fragments) > 1:
+            logger.info("Response split into %d fragments for sender %s",
+                        len(fragments), to[:6] + "***")
+        for fragment in fragments:
+            self._send_text_raw(to, fragment)
+
+    def _send_text_raw(self, to: str, text: str) -> None:
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",

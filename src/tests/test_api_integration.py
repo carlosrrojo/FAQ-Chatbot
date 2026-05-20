@@ -137,3 +137,60 @@ def test_instagram_message_handling(client, app):
     # Assertions
     mock_orch.generate_reply.assert_called_once()
     mock_ig.send_reply.assert_called_once()
+
+
+@patch("src.transport.webhook_controller.threading.Thread", new=SyncThread)
+@pytest.mark.parametrize("media_type, media_payload", [
+    ("audio", {"audio": {"id": "123", "mime_type": "audio/ogg"}}),
+    ("image", {"image": {"id": "123", "mime_type": "image/jpeg"}}),
+    ("video", {"video": {"id": "123", "mime_type": "video/mp4"}}),
+    ("sticker", {"sticker": {"id": "123", "mime_type": "image/webp"}}),
+    ("location", {"location": {"latitude": 0.0, "longitude": 0.0}}),
+    ("document", {"document": {"id": "123", "mime_type": "application/pdf"}}),
+    ("contacts", {"contacts": [{"name": {"formatted_name": "John Doe"}}]}),
+    ("interactive", {"interactive": {"type": "list_reply"}}),
+    ("button", {"button": {"text": "Click"}}),
+    ("reaction", {"reaction": {"message_id": "msg_123", "emoji": "👍"}}),
+    ("unknown", {}),
+])
+def test_whatsapp_non_text_message_handling(client, app, media_type, media_payload):
+    mock_orch = app.config["ORCHESTRATOR"]
+    mock_wa = app.config["WA_CLIENT"]
+
+    mock_wa.send_reply.reset_mock()
+    mock_orch.generate_reply.reset_mock()
+
+    message_data = {
+        "id": "msg_123",
+        "from": "123456789",
+        "type": media_type,
+    }
+    message_data.update(media_payload)
+
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "messages": [message_data]
+                }
+            }]
+        }]
+    }
+
+    response = client.post("/webhook", json=payload)
+    assert response.status_code == 200
+    assert response.json == {"status": "accepted"}
+
+    # The orchestrator should NOT be called for non-text messages
+    mock_orch.generate_reply.assert_not_called()
+
+    # WhatsApp client send_reply should be called with the predefined message
+    mock_wa.send_reply.assert_called_once()
+    call_args = mock_wa.send_reply.call_args[0][0]
+    from src.domain.models import ChatResponse
+    assert isinstance(call_args, ChatResponse)
+    assert call_args.sender_id == "123456789"
+    from src.transport.webhook_controller import _UNSUPPORTED_TYPE_RESPONSE_ES
+    assert call_args.text == _UNSUPPORTED_TYPE_RESPONSE_ES
+
