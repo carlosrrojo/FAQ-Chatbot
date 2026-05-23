@@ -68,10 +68,15 @@ def _handle_whatsapp(data: dict, app) -> None:
         wa_client = app.config["WA_CLIENT"]
 
         try:
-            chat_request, message_id, msg_type = parse_whatsapp_payload(data)
-        except (KeyError, IndexError, ValueError):
+            result = parse_whatsapp_payload(data)
+        except (KeyError, IndexError):
             logger.warning("Could not parse WhatsApp payload.", exc_info=True)
             return
+
+        if result is None:
+            return
+
+        chat_request, message_id, msg_type = result
 
         if msg_type != "text":
             # FR-CHN-05: graceful handling of non-text message types

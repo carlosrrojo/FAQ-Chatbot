@@ -3,10 +3,12 @@ RAG Agent — LangGraph-based conversational retrieval agent.
 
 Architecture
 ------------
-    START → call_model
-                ↓  (tool_calls present?)
-             [yes] → retrieve (ToolNode) [→ translate_context*] → call_model  (loop)
-             [no]  → END
+    START → manage_memory → [greeting?]
+                               ├─ yes → greeting_response → END
+                               └─ no  → call_model
+                                           ↓  (tool_calls present?)
+                                        [yes] → retrieve [→ translate_context*] → call_model  (loop)
+                                        [no]  → END
 
     * translate_context is an optional node activated via
       TRANSLATE_CONTEXT_ENABLED in config.py.  When enabled it translates
@@ -24,6 +26,8 @@ from __future__ import annotations
 
 import logging
 import warnings
+
+import numpy as np
 from typing import Annotated
 from langchain_core._api import deprecated
 
@@ -52,11 +56,18 @@ from src.config import (
     RRF_K,
     TOP_K,
     FILTER_CONFIDENCE_THRESHOLD,
+    RELEVANCE_THRESHOLD,
     TRANSLATE_CONTEXT_ENABLED,
     MAX_HISTORY_TURNS,
 )
 from src.infrastructure.retrieval.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
+from src.rag.greeting_seeds import (
+    GREETING_SEEDS,
+    GREETING_RESPONSES,
+    GREETING_SIMILARITY_THRESHOLD,
+    GREETING_MAX_LENGTH,
+)
 from src.utils import get_sections
 
 from src.logging_config import configure_logging
@@ -275,16 +286,17 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         sparse_hits = _bm25_index.search(query, k=HYBRID_K)
 
         rrf_docs = _reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=HYBRID_K)
-        docs     = rerank(query, rrf_docs, top_n=TOP_K)
+        docs, best_score = rerank(query, rrf_docs, top_n=TOP_K)
 
     except Exception:
         logger.exception("Retrieval failed; falling back to simple retrieve.")
         docs = _vectorstore.as_retriever().invoke(query)
+        best_score = float("-inf")
 
     serialized = "\n\n".join(
         f"Source: {doc.metadata}\nContent: {doc.page_content}" for doc in docs
     )
-    return serialized, docs
+    return serialized, {"docs": docs, "best_reranker_score": best_score}
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +336,78 @@ def _detect_user_language(messages: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Greeting classifier  (S1.1 — embedding-based, language-agnostic)
+# ---------------------------------------------------------------------------
+
+_greeting_centroid: np.ndarray | None = None
+
+
+def _get_greeting_centroid() -> np.ndarray:
+    """
+    Lazily compute and cache the centroid of the seed greeting
+    embeddings.  Costs one ``embed_documents`` call on first use;
+    every subsequent call is free.
+    """
+    global _greeting_centroid
+    if _greeting_centroid is None:
+        vecs = _embeddings.embed_documents(GREETING_SEEDS)
+        _greeting_centroid = np.mean(vecs, axis=0)
+        logger.info(
+            "Greeting centroid computed from %d seed phrases.",
+            len(GREETING_SEEDS),
+        )
+    return _greeting_centroid
+
+
+def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine similarity between two vectors."""
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.dot(a, b) / denom) if denom else 0.0
+
+
+def _is_pure_greeting(text: str) -> bool:
+    """
+    Return True when *text* is a standalone greeting in **any** language.
+
+    The check embeds the text and compares it against a precomputed
+    greeting centroid.  A length guard (``GREETING_MAX_LENGTH``) avoids
+    paying the embedding cost for messages that are clearly too long
+    to be a greeting.
+    """
+    text = text.strip()
+    if len(text) > GREETING_MAX_LENGTH:
+        return False
+    user_vec = np.array(_embeddings.embed_query(text))
+    sim = _cosine_similarity(user_vec, _get_greeting_centroid())
+    logger.debug("Greeting similarity: %.4f (threshold: %.2f)", sim, GREETING_SIMILARITY_THRESHOLD)
+    return sim >= GREETING_SIMILARITY_THRESHOLD
+
+
+def _route_after_memory(state: AgentState) -> str:
+    """
+    Conditional edge after *manage_memory*: route pure greetings
+    directly to a canned response node, everything else to the
+    full RAG pipeline.
+    """
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, HumanMessage):
+            if _is_pure_greeting(msg.content):
+                logger.info("Pure greeting detected — skipping retrieval.")
+                return "greeting_response"
+            break
+    return "call_model"
+
+
+def _greeting_response(state: AgentState) -> dict:
+    """Return a warm, localised greeting without invoking the LLM."""
+    from langchain_core.messages import AIMessage
+
+    lang_code = _detect_user_language(state["messages"])
+    reply = GREETING_RESPONSES.get(lang_code, GREETING_RESPONSES["es"])
+    return {"messages": [AIMessage(content=reply)]}
+
+
+# ---------------------------------------------------------------------------
 # Graph nodes
 # ---------------------------------------------------------------------------
 
@@ -352,13 +436,28 @@ def _call_model(state: AgentState) -> dict:
     lang_name = _LANG_NAMES.get(lang_code, lang_code.title())
     logger.debug("Detected user language: %s (%s)", lang_code, lang_name)
 
-    # FR-AGT-04: Out-of-scope fallback short-circuit
+    # FR-AGT-04: Out-of-scope fallback — trigger only when the reranker
+    # explicitly scored every candidate below the relevance threshold,
+    # NOT merely when the retrieval returned no documents.  This lets
+    # the LLM handle greetings / small-talk from its own knowledge even
+    # if the knowledge base had nothing to offer.
     if state["messages"] and isinstance(state["messages"][-1], ToolMessage):
-        if not state["messages"][-1].content.strip():
+        tool_msg = state["messages"][-1]
+        artifact = getattr(tool_msg, "artifact", None) or {}
+        best_score = artifact.get("best_reranker_score", None)
+
+        if (
+            best_score is not None
+            and best_score != float("-inf")   # no candidates ≠ out-of-scope
+            and best_score < RELEVANCE_THRESHOLD
+        ):
             from src.domain.orchestrator import _OOS_RESPONSES
             from langchain_core.messages import AIMessage
-            
-            logger.info("No relevant documents found. Triggering OOS fallback response.")
+
+            logger.info(
+                "OOS fallback: best reranker score %.4f < threshold %.4f",
+                best_score, RELEVANCE_THRESHOLD,
+            )
             reply_text = _OOS_RESPONSES.get(lang_code, _OOS_RESPONSES["es"])
             return {"messages": [AIMessage(content=reply_text)]}
 
@@ -459,20 +558,28 @@ def build_graph(checkpointer=None):
         checkpointer: Optional LangGraph checkpointer for persistence.
                       If None, a default MemorySaver is used.
 
-    When ``TRANSLATE_CONTEXT_ENABLED`` is ``True`` the graph becomes::
+    Graph topology::
 
-        START → call_model → [tools?] → retrieve → translate_context → call_model
-                                ↓ (no tools)
-                               END
+        START → manage_memory → [greeting?]
+                                   ├─ yes → greeting_response → END
+                                   └─ no  → call_model → [tools?]
+                                                            ├─ yes → retrieve [→ translate_context] → call_model
+                                                            └─ no  → END
     """
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("manage_memory", _manage_memory)
-    workflow.add_node("call_model", _call_model)
-    workflow.add_node("retrieve",   ToolNode([retrieve_documents]))
+    workflow.add_node("manage_memory",    _manage_memory)
+    workflow.add_node("greeting_response", _greeting_response)
+    workflow.add_node("call_model",       _call_model)
+    workflow.add_node("retrieve",         ToolNode([retrieve_documents]))
 
     workflow.add_edge(START, "manage_memory")
-    workflow.add_edge("manage_memory", "call_model")
+    workflow.add_conditional_edges(
+        "manage_memory",
+        _route_after_memory,
+        {"greeting_response": "greeting_response", "call_model": "call_model"},
+    )
+    workflow.add_edge("greeting_response", END)
     workflow.add_conditional_edges(
         "call_model",
         tools_condition,
@@ -497,13 +604,14 @@ rag_agent = None
 # Public API
 # ---------------------------------------------------------------------------
 
+"""
 @deprecated(
     since="1.1.0",
     message="Use src.domain.orchestrator.RAGOrchestrator instead.",
     removal="2.0.0",
 )
 def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
-    """
+
     Generate a reply for an incoming customer message.
 
     Args:
@@ -514,7 +622,6 @@ def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
 
     Returns:
         A plain-text reply to send back to the customer.
-    """
     global rag_agent
     if rag_agent is None:
         rag_agent = build_graph(checkpointer=SqliteMemoryAdapter().get_checkpointer())
@@ -525,7 +632,7 @@ def generate_reply(platform: str, user_message: str, sender_id: str) -> str:
         {"messages": [{"role": "user", "content": user_message}]},
         {"configurable": {"thread_id": sender_id}},
     )
-    return result["messages"][-1].content
+    return result["messages"][-1].content"""
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +644,8 @@ if __name__ == "__main__":
 
     configure_logging()
     logger.info("RAG Agent — interactive mode. Type 'exit' or 'quit' to quit.")
+
+    agent = build_graph()
     thread = "local-test"
 
     while True:
@@ -549,7 +658,7 @@ if __name__ == "__main__":
         if user_input.lower() in ("exit", "quit", ""):
             break
 
-        for event in rag_agent.stream(
+        for event in agent.stream(
             {"messages": [{"role": "user", "content": user_input}]},
             {"configurable": {"thread_id": thread}},
             stream_mode="values",

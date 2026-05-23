@@ -8,6 +8,7 @@ Evaluates the retrieve → generate pipeline using four metrics:
   - Context Recall    (context covers the ground-truth answer)
 """
 
+from src.config import COLLECTION
 from sqlalchemy.orm.collections import collection
 import argparse
 import json
@@ -397,5 +398,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    collection = "metadata_NoRerank_1024"
-    run_evaluator(collection, evaluator=args.evaluator, limit=args.limit)
+    run_evaluator(COLLECTION, evaluator=args.evaluator, limit=args.limit)

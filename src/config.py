@@ -1,4 +1,9 @@
+from sqlalchemy import true
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 """
 Centralised configuration for the RAG agent.
 
@@ -17,8 +22,7 @@ COLLECTION = "metadata_espazo_nature_1024"
 MEMORY_DB_PATH: str = "data/memory.sqlite"        # FR-MEM-02
 MANIFEST_PATH: str = "data/chroma_db/ingest_manifest.json"   # FR-ING-07
 
-# ── ChromaDB collection ───────────────────────────────────────────────────────
-COLLECTION: str = "metadata_espazo_nature_1024"
+# ── ChromaDB ───────────────────────────────────────────────────────
 CHUNK_SIZE: int = 1024
 CHUNK_OVERLAP: int = 256
 
@@ -46,4 +50,4 @@ WHATSAPP_MAX_CHARS: int = 4096     # FR-CHN-06
 INSTAGRAM_MAX_CHARS: int = 1000    # Instagram DM practical limit
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
-TELEMETRY_ENABLED: bool = os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
+TELEMETRY_ENABLED: bool = True

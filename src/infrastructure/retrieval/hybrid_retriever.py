@@ -103,14 +103,12 @@ class HybridRetriever(IRetriever):
         fused = _reciprocal_rank_fusion(dense_merged, sparse_results, k=RRF_K)
 
         # Cross-encoder reranking
-        ranked_with_scores = rerank(query, fused, top_n=TOP_K)
+        ranked_docs, best_score = rerank(query, fused, top_n=TOP_K)
 
-        results = []
-        for doc, score in ranked_with_scores:
-            results.append(self._to_dto(doc, score))
+        results = [self._to_dto(doc, 0.0) for doc in ranked_docs]
 
-        logger.info("Retrieval complete: %d documents returned (top score=%.3f)",
-                    len(results), results[0].score if results else 0.0)
+        logger.info("Retrieval complete: %d documents returned (best_rerank_score=%.3f)",
+                    len(results), best_score)
         return results
 
     def _augment_query(self, query: str) -> str:

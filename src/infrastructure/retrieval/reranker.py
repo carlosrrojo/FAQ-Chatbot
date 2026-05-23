@@ -18,14 +18,23 @@ def rerank(
     query: str,
     docs: list[Document],
     top_n: int,
-) -> list[Document]:
-    """Return top_n docs reranked by cross-encoder score."""
+) -> tuple[list[Document], float]:
+    """Return top_n docs reranked by cross-encoder score and the best score.
+
+    Returns:
+        A tuple ``(filtered_docs, best_score)`` where *best_score* is the
+        highest cross-encoder score among **all** candidates (before
+        threshold filtering).  If *docs* is empty, *best_score* is
+        ``float('-inf')``.
+    """
     if not docs:
-        return docs
+        return docs, float("-inf")
     encoder = get_encoder()
     pairs   = [(query, doc.page_content) for doc in docs]
     scores  = encoder.predict(pairs)          # shape: (len(docs),)
     ranked  = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+
+    best_score = float(ranked[0][1])          # highest score before filtering
 
     from src.config import RELEVANCE_THRESHOLD
     filtered_ranked = [(doc, score) for doc, score in ranked if score >= RELEVANCE_THRESHOLD]
@@ -37,4 +46,4 @@ def rerank(
         logger.debug("  [%2d] rerank_score=%.4f  | %s…", rank, score, snippet)
     logger.debug("=" * 70 + "\n")
     
-    return [doc for doc, _ in filtered_ranked[:top_n]]
+    return [doc for doc, _ in filtered_ranked[:top_n]], best_score
