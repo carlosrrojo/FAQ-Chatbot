@@ -12,12 +12,16 @@ All tunable constants live here so they never drift between modules.
 
 # ── LLM / Embeddings ─────────────────────────────────────────────────────────
 MODEL_NAME = "llama3.1"
-EMBEDDING_MODEL: str = "llama3.1"
+EMBEDDING_MODEL: str = "BAAI/bge-m3"
+
+EMBEDDING_PROVIDER = "huggingface"          # "ollama" | "huggingface"
+EMBEDDING_DEVICE = "cpu"                    # "cpu" | "cuda" | "mps"
+EMBEDDING_NORMALIZE = True                  # bge-m3 expects L2-normalised vectors
+EMBEDDING_BATCH_SIZE = 12
 
 # ── Storage paths ──────────────────────────────────────────────────────────────
 DB_PATH    = "data/chroma_db"
 DATA_PATH  = "data/documents"
-COLLECTION = "metadata_espazo_nature_1024"
 
 MEMORY_DB_PATH: str = "data/memory.sqlite"        # FR-MEM-02
 MANIFEST_PATH: str = "data/chroma_db/ingest_manifest.json"   # FR-ING-07
@@ -25,6 +29,7 @@ MANIFEST_PATH: str = "data/chroma_db/ingest_manifest.json"   # FR-ING-07
 # ── ChromaDB ───────────────────────────────────────────────────────
 CHUNK_SIZE: int = 1024
 CHUNK_OVERLAP: int = 256
+COLLECTION = EMBEDDING_MODEL.replace("/", "-") + "_espazo_nature_" + str(CHUNK_SIZE)
 
 # ── Retrieval pipeline hyperparameters ────────────────────────────────────────────────────────
 HYBRID_K = 20  # candidates fetched from each index (dense + sparse) before RRF

@@ -22,3 +22,5 @@ langgraph-checkpoint-sqlite>=1.0.0
 numpy>=1.26.0
 scikit-learn>=1.5.0
 langchain-google-genai>=1.0.0
+langchain-huggingface>=0.1.0
+sentence-transformers>=3.0.0

@@ -8,7 +8,8 @@ Evaluates the retrieve → generate pipeline using four metrics:
   - Context Recall    (context covers the ground-truth answer)
 """
 
-from src.config import COLLECTION
+from benchmarks.eval_data import FAQ_QUERIES
+from src.config import COLLECTION, EMBEDDING_MODEL
 from sqlalchemy.orm.collections import collection
 import argparse
 import json
@@ -27,16 +28,18 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
 
-from benchmarks.eval_data import DATA
+from benchmarks.eval_data import FAQ_QUERIES
 from langchain_core.globals import set_debug
-from src.rag.agent import generate_reply, retrieve_documents
+from src.rag.agent import retrieve_documents
 from src.domain.orchestrator import RAGOrchestrator
 from src.domain.models import ChatRequest
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
+from src.infrastructure.embeddings import get_embeddings
+import src.rag.agent
 
 set_debug(False)
 
-EVAL_DATA = DATA
+EVAL_DATA = FAQ_QUERIES
 
 
 # FR-EVL-01 AC-1: minimum score thresholds (Gemini judge, Spanish partition)
@@ -51,7 +54,8 @@ METRIC_THRESHOLDS: dict[str, float] = {
 NFR_E2E_THRESHOLD_S: float = 15.0        # NFR-PERF-01: ≤15 s end-to-end
 NFR_RETRIEVAL_THRESHOLD_S: float = 3.0    # NFR-PERF-02: ≤3 s retrieval
 
-orchestrator = RAGOrchestrator(memory_store=SqliteMemoryAdapter())
+orchestrator_mem    = RAGOrchestrator(memory_store=SqliteMemoryAdapter())
+orchestrator_no_mem = RAGOrchestrator(memory_store=None)
 
 # ---------------------------------------------------------------------------
 # Metric helpers
@@ -180,8 +184,9 @@ def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", 
         embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
     else:
         model      = ChatOllama(model="llama3.1")
-        embeddings = OllamaEmbeddings(model="llama3.1")
-
+        #embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+        embeddings = get_embeddings()
+    
     results: dict[str, dict[str, list[float]]] = {
         "es": {
             "faithfulness":    [],
@@ -232,18 +237,22 @@ def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", 
         question     = item["question"]
         ground_truth = item["ground_truth"]
         lang         = item.get("language", "es")
+        stratum      = item.get("stratum", "")
 
         # ── Timed retrieval (AC-4 / NFR-PERF-02) ─────────────────────
         t_ret_start = time.perf_counter()
-        _, retrieved_docs = retrieve_documents.func(question)
+        _, artifact = retrieve_documents.func(question)
         retrieval_s = time.perf_counter() - t_ret_start
         retrieval_latencies.append(retrieval_s)
 
+        retrieved_docs = artifact["docs"]
         contexts = [doc.page_content for doc in retrieved_docs]
 
         # ── Timed end-to-end (AC-4 / NFR-PERF-01) ────────────────────
+        use_memory = item.get("memory", False)
+        orch = orchestrator_mem if use_memory else orchestrator_no_mem
         t_e2e_start = time.perf_counter()
-        answer = orchestrator.generate_reply(
+        answer = orch.generate_reply(
             ChatRequest(platform="eval", text=question, sender_id="eval-runner")
         ).text
         e2e_s = time.perf_counter() - t_e2e_start
@@ -286,6 +295,7 @@ def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", 
         per_query.append({
             "question": question,
             "language": lang,
+            "stratum": stratum,
             "faithfulness": round(f_score, 4),
             "answer_relevancy": round(ar_score, 4),
             "context_precision": round(cp_score, 4),

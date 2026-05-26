@@ -6,11 +6,12 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from src.rag.processor import parse_doc, get_children
-from src.config import CHUNK_SIZE, CHUNK_OVERLAP, MODEL_NAME, DATA_PATH, DB_PATH, COLLECTION
+from src.config import CHUNK_SIZE, CHUNK_OVERLAP, MODEL_NAME, EMBEDDING_MODEL, DATA_PATH, DB_PATH, COLLECTION
 from src.logging_config import configure_logging
 from src.utils import stable_id
 import logging
 import chromadb
+from src.infrastructure.embeddings import get_embeddings
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -43,7 +44,8 @@ for i, chunk in enumerate(chunks):
 logger.info("Added extra metadata to documents. Current chunks: %d", len(chunks))
 
 # 4. Embed and persist to vector store
-embeddings = OllamaEmbeddings(model=MODEL_NAME)
+#embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+embeddings = get_embeddings()
 
 client = chromadb.PersistentClient(path=DB_PATH)
 try:
