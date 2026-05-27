@@ -9,6 +9,7 @@ from src.infrastructure.channels.instagram_client import InstagramClient
 from src.infrastructure.deduplication import InMemoryDeduplicationStore
 from src.domain.orchestrator import RAGOrchestrator
 from src.transport.webhook_controller import webhook_bp
+from src.transport.health_controller import health_bp
 from src.infrastructure.retrieval.hybrid_retriever import HybridRetriever
 from src.rag.watcher import start_watcher
 from src.rag.agent import rebuild_bm25
@@ -53,6 +54,7 @@ def create_app() -> Flask:
     app.config["SHUTDOWN_MANAGER"] = shutdown_mgr
 
     app.register_blueprint(webhook_bp)
+    app.register_blueprint(health_bp)
 
     # Start file watcher (FR-ING-05)
     # After re-ingestion, rebuild the BM25 sparse index to stay in sync
