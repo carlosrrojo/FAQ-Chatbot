@@ -1,4 +1,6 @@
 # src/transport/webhook_controller.py
+import hashlib
+import hmac
 import logging
 import os
 import threading
@@ -33,12 +35,49 @@ def verify():
     return "Forbidden", 403
 
 
+def _verify_signature(payload: bytes, signature_header: str | None) -> bool:
+    """
+    Validate the X-Hub-Signature-256 header against the raw request body
+    using the Meta App Secret (HMAC-SHA256).
+
+    Returns True if the signature is valid, False otherwise.
+    FR-CHN-04 (enhanced).
+    """
+    app_secret = os.getenv("META_APP_SECRET")
+    if not app_secret:
+        logger.error("META_APP_SECRET not configured — rejecting request.")
+        return False
+
+    if not signature_header:
+        logger.warning("Missing X-Hub-Signature-256 header.")
+        return False
+
+    # Header format: "sha256=<hex digest>"
+    if not signature_header.startswith("sha256="):
+        return False
+
+    expected = hmac.new(
+        app_secret.encode(),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature_header[7:])
+
+
 @webhook_bp.route("/webhook", methods=["POST"])
 def receive():
     """
     Main inbound webhook endpoint. Dispatches to platform-specific handlers
     in a background thread to satisfy Meta's 20-second deadline. FR-CHN-01.
     """
+    # ── Signature verification (FR-CHN-04) ──────────────────────────
+    raw_body = request.get_data()
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not _verify_signature(raw_body, signature):
+        logger.warning("Webhook signature verification failed.")
+        return "Unauthorized", 401
+
     data = request.get_json(silent=True) or {}
     platform_object = data.get("object", "")
 

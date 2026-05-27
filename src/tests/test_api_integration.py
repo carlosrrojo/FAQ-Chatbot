@@ -39,6 +39,20 @@ def client(app):
     return app.test_client()
 
 
+@pytest.fixture(autouse=True)
+def _bypass_signature_verification():
+    """Bypass HMAC signature check for integration tests.
+
+    Signature verification correctness is covered by
+    src/tests/test_webhook_signature.py.
+    """
+    with patch(
+        "src.transport.webhook_controller._verify_signature",
+        return_value=True,
+    ):
+        yield
+
+
 def test_webhook_verification(client):
     # Test correct token
     response = client.get("/webhook", query_string={
