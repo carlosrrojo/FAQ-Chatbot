@@ -60,6 +60,7 @@ from src.config import (
     RELEVANCE_THRESHOLD,
     TRANSLATE_CONTEXT_ENABLED,
     MAX_HISTORY_TURNS,
+    CONVERSATION_SUMMARIZATION_ENABLED,
 )
 from src.infrastructure.retrieval.reranker import rerank
 from src.rag.metadata_extractor import find_valid_labels
@@ -409,23 +410,76 @@ def _call_model(state: AgentState) -> dict:
 def _manage_memory(state: AgentState) -> dict:
     """
     Enforces a sliding window of MAX_HISTORY_TURNS conversation turns.
-    Returns RemoveMessage objects for old messages to delete them from state.
+    If summarization is enabled, old messages are summarized by the LLM
+    into a single SystemMessage with id="conversation_summary" before deletion.
     """
     messages = state["messages"]
-    
-    # Exclude SystemMessages just in case, though they aren't normally in state here
-    convo_msgs = [m for m in messages if m.__class__.__name__ != "SystemMessage"]
-    
-    max_messages = MAX_HISTORY_TURNS * 2   # pairs of (human, AI)
-    if len(convo_msgs) > max_messages:
-        to_remove = convo_msgs[:-max_messages]
-        logger.info(
-            "History truncated: %d → %d messages (removing %d oldest)",
-            len(convo_msgs), max_messages, len(to_remove)
+
+    # 1. Identify any existing summary message and extract actual conversation messages
+    existing_summary_msg = None
+    convo_msgs = []
+    for m in messages:
+        if m.id == "conversation_summary" or (m.type == "system" and m.content.startswith("Resumen de la conversación anterior:")):
+            existing_summary_msg = m
+        else:
+            convo_msgs.append(m)
+
+    max_messages = MAX_HISTORY_TURNS * 2  # pairs of (human, AI)
+    if len(convo_msgs) <= max_messages:
+        return {"messages": []}
+
+    # 2. Split into messages to remove and messages to keep
+    to_remove = convo_msgs[:-max_messages]
+
+    # 3. If summarization is disabled, perform standard hard truncation
+    if not CONVERSATION_SUMMARIZATION_ENABLED:
+        logger.info("Summarization disabled; hard-truncating %d messages", len(to_remove))
+        messages_to_remove = [RemoveMessage(id=m.id) for m in to_remove if m.id]
+        if existing_summary_msg and existing_summary_msg.id:
+            messages_to_remove.append(RemoveMessage(id=existing_summary_msg.id))
+        return {"messages": messages_to_remove}
+
+    # 4. Perform hybrid summarization
+    try:
+        summary_prompt = (
+            "Resume la siguiente conversación anterior de forma muy concisa (máximo 150 palabras), "
+            "capturando los puntos clave, preguntas del usuario, respuestas dadas y cualquier estado o "
+            "reserva en curso. Este resumen servirá de contexto para continuar la conversación.\n\n"
         )
-        return {"messages": [RemoveMessage(id=m.id) for m in to_remove if m.id]}
-        
-    return {"messages": []}
+        if existing_summary_msg:
+            summary_prompt += f"Resumen anterior:\n{existing_summary_msg.content}\n\n"
+
+        summary_prompt += "Nuevos mensajes a resumir:\n"
+        for m in to_remove:
+            role = "Usuario" if m.type == "human" else "Asistente" if m.type == "ai" else m.type.capitalize()
+            summary_prompt += f"{role}: {m.content}\n"
+
+        logger.info("Generating conversation summary for %d messages...", len(to_remove))
+        summary_response = _llm.invoke(summary_prompt)
+        summary_text = summary_response.content.strip()
+
+        new_summary_msg = SystemMessage(
+            content=f"Resumen de la conversación anterior: {summary_text}",
+            id="conversation_summary"
+        )
+
+        messages_to_return = []
+        if existing_summary_msg and existing_summary_msg.id:
+            messages_to_return.append(RemoveMessage(id=existing_summary_msg.id))
+        for m in to_remove:
+            if m.id:
+                messages_to_return.append(RemoveMessage(id=m.id))
+        messages_to_return.append(new_summary_msg)
+
+        logger.info("Conversation summarization complete. Injected summary ID: 'conversation_summary'.")
+        return {"messages": messages_to_return}
+
+    except Exception as e:
+        logger.error("Failed to generate conversation summary: %s. Falling back to hard truncation.", e)
+        messages_to_remove = [RemoveMessage(id=m.id) for m in to_remove if m.id]
+        if existing_summary_msg and existing_summary_msg.id:
+            messages_to_remove.append(RemoveMessage(id=existing_summary_msg.id))
+        return {"messages": messages_to_remove}
 
 
 

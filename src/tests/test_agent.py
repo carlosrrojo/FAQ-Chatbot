@@ -17,6 +17,7 @@ def test_manage_memory_no_truncation():
     assert result == {"messages": []}
 
 
+@patch("src.rag.agent.CONVERSATION_SUMMARIZATION_ENABLED", False)
 def test_manage_memory_truncation():
     # Create messages exceeding MAX_HISTORY_TURNS * 2 limit
     limit = MAX_HISTORY_TURNS * 2
@@ -34,6 +35,7 @@ def test_manage_memory_truncation():
     assert len(removed) == 4
     assert all(isinstance(msg, RemoveMessage) for msg in removed)
     assert [msg.id for msg in removed] == ["0", "1", "2", "3"]
+
 
 
 def test_detect_user_language_spanish():
