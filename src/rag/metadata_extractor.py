@@ -3,37 +3,6 @@ metadata_extractor.py
 ---------------------
 Extracts structured metadata from raw Spanish-language text chunks
 during the ingestion pipeline.
-
-Schema
-------
-{
-    "entity_id":   str,           # auto-generated UUID or passed in
-    "entity_type": str,           # servicio | alojamiento | entorno | actividad | general
-    "metadata": {
-        "section":             str,        # top-level section (e.g. "alojamientos")
-        "subsection":          str,        # specific entity name (e.g. "gran_villa")
-        "content_type":        str,        # descripcion | precio | normas | servicios | ubicacion
-        "accommodation_type":  str | None, # villa | apartamento | casa | cabaña | None
-        "capacity":            list[str],  # ["4_personas", "6_personas"]
-        "features":            list[str],  # ["piscina_privada", "terraza", ...]
-        "services":            list[str],  # ["wifi", "cocina_equipada", ...]
-        "location":            list[str],  # ["playa_razo", "laguna_baldaio", ...]
-        "environment":         list[str],  # ["naturaleza", "playa", "rural", ...]
-        "activities":          list[str],  # ["surf", "senderismo", ...]
-        "target_audience":     list[str],  # ["familias", "parejas", "grupos", ...]
-    }
-}
-
-Usage
------
-    from metadata_extractor import MetadataExtractor
-
-    extractor = MetadataExtractor()
-    result    = extractor.extract(text="...", entity_id="2312")
-    print(result)
-
-    # Batch (ingestion pipeline)
-    records = extractor.extract_batch(chunks)   # list of {"text": str, "entity_id": str}
 """
 
 from __future__ import annotations

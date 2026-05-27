@@ -56,6 +56,12 @@ class RAGOrchestrator:
         result = self._agent.invoke(input_state, config=config)
         reply_text = result["messages"][-1].content
 
+        if self._memory is not None:
+            try:
+                self._memory.touch_session(request.sender_id)
+            except Exception as e:
+                logger.error("Failed to touch session for %s: %s", request.sender_id, e)
+
         return ChatResponse(
             text=reply_text,
             sender_id=request.sender_id,

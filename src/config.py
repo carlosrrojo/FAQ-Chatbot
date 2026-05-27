@@ -49,6 +49,7 @@ TRANSLATE_CONTEXT_ENABLED: bool = False       # FR-AGT-02: translate retrieved d
 # ── Memory / session ─────────────────────────────────────────────────────────
 MAX_HISTORY_TURNS: int = 20    # FR-MEM-03: sliding window (turns = user+assistant pairs)
 SESSION_TTL_DAYS: int = 30     # FR-PRV-01: data retention policy
+RETENTION_CHECK_INTERVAL_HOURS: int = 24  # FR-PRV-01: purge cycle (hours)
 
 # ── Platform constraints ──────────────────────────────────────────────────────
 WHATSAPP_MAX_CHARS: int = 4096     # FR-CHN-06

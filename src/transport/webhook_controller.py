@@ -69,8 +69,14 @@ def _verify_signature(payload: bytes, signature_header: str | None) -> bool:
 def receive():
     """
     Main inbound webhook endpoint. Dispatches to platform-specific handlers
-    in a background thread to satisfy Meta's 20-second deadline. FR-CHN-01.
+    via ShutdownManager executor (or daemon thread fallback) to satisfy
+    Meta's 20-second deadline. FR-CHN-01.
     """
+    shutdown_mgr = current_app.config.get("SHUTDOWN_MANAGER")
+    if shutdown_mgr and shutdown_mgr.is_shutting_down:
+        logger.warning("Rejecting inbound webhook: service shutting down.")
+        return jsonify({"error": "Service Temporarily Unavailable"}), 503
+
     # ── Signature verification (FR-CHN-04) ──────────────────────────
     raw_body = request.get_data()
     signature = request.headers.get("X-Hub-Signature-256")
@@ -82,19 +88,25 @@ def receive():
     platform_object = data.get("object", "")
 
     if platform_object == "whatsapp_business_account":
-        thread = threading.Thread(
-            target=_handle_whatsapp,
-            args=(data, current_app._get_current_object()),
-            daemon=True,
-        )
-        thread.start()
+        if shutdown_mgr:
+            shutdown_mgr.submit_task(_handle_whatsapp, data, current_app._get_current_object())
+        else:
+            thread = threading.Thread(
+                target=_handle_whatsapp,
+                args=(data, current_app._get_current_object()),
+                daemon=True,
+            )
+            thread.start()
     elif platform_object == "instagram":
-        thread = threading.Thread(
-            target=_handle_instagram,
-            args=(data, current_app._get_current_object()),
-            daemon=True,
-        )
-        thread.start()
+        if shutdown_mgr:
+            shutdown_mgr.submit_task(_handle_instagram, data, current_app._get_current_object())
+        else:
+            thread = threading.Thread(
+                target=_handle_instagram,
+                args=(data, current_app._get_current_object()),
+                daemon=True,
+            )
+            thread.start()
     else:
         logger.warning("Unknown webhook object type: %s", platform_object)
 

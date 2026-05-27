@@ -31,6 +31,16 @@ class IMemoryStore(ABC):
         """Permanently erase all data for a given user. (FR-PRV-02)"""
         ...
 
+    @abstractmethod
+    def touch_session(self, sender_id: str) -> None:
+        """Record current timestamp as last activity for the session. (FR-PRV-01)"""
+        ...
+
+    @abstractmethod
+    def purge_expired_sessions(self, ttl_days: int) -> int:
+        """Delete all sessions inactive for longer than ttl_days. Returns count deleted. (FR-PRV-01)"""
+        ...
+
 
 class IMessageChannel(ABC):
     """Port: outbound message delivery. One implementation per platform."""

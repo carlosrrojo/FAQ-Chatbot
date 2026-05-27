@@ -6,6 +6,9 @@ from langchain_core.documents import Document
 import fitz
 import re
 import ast
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractProcessor:
@@ -137,7 +140,7 @@ class ExtractProcessor:
         try:
             fitz_doc.close()
         except Exception as e:
-            print(f"Error processing {document_path} with PyMuPDF: {e}")
+            logger.error(f"Error processing {document_path} with PyMuPDF: {e}")
             # Fallback: Just append original doc if there's an error
             section_docs.append(doc)
 
@@ -150,4 +153,4 @@ if __name__ == "__main__":
     processor = ExtractProcessor(ChatOllama(model="llama3.1"))
     docs = processor.process_document(doc1)
     for doc in docs:
-        print(doc.metadata)
+        logger.info(doc.metadata)

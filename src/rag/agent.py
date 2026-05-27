@@ -31,7 +31,8 @@ import warnings
 from typing import Annotated
 from langchain_core._api import deprecated
 
-from langdetect import detect as _detect_lang, LangDetectException
+from langdetect import DetectorFactory, detect as _detect_lang, LangDetectException
+DetectorFactory.seed = 0
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document

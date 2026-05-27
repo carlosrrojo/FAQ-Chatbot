@@ -12,6 +12,8 @@ from src.transport.webhook_controller import webhook_bp
 from src.infrastructure.retrieval.hybrid_retriever import HybridRetriever
 from src.rag.watcher import start_watcher
 from src.rag.agent import rebuild_bm25
+from src.infrastructure.retention_scheduler import RetentionScheduler
+from src.transport.shutdown import ShutdownManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +30,8 @@ def create_app() -> Flask:
     )
 
     app = Flask(__name__)
-
     # Infrastructure
+    shutdown_mgr = ShutdownManager()
     memory = SqliteMemoryAdapter()
     wa_client = WhatsAppClient()
     ig_client = InstagramClient()
@@ -38,13 +40,18 @@ def create_app() -> Flask:
     # Domain
     orchestrator = RAGOrchestrator(memory_store=memory)
 
+    # GDPR retention enforcement (FR-PRV-01)
+    retention = RetentionScheduler(memory)
+    retention.start()
+
     # Register blueprint, passing dependencies via app config
     app.config["ORCHESTRATOR"] = orchestrator
     app.config["WA_CLIENT"] = wa_client
     app.config["IG_CLIENT"] = ig_client
     app.config["DEDUP_STORE"] = dedup_store
+    app.config["RETENTION_SCHEDULER"] = retention
+    app.config["SHUTDOWN_MANAGER"] = shutdown_mgr
 
-    
     app.register_blueprint(webhook_bp)
 
     # Start file watcher (FR-ING-05)
@@ -52,10 +59,22 @@ def create_app() -> Flask:
     # with the updated ChromaDB collection (FR-RET-02 criterion 3).
     abs_data_path = os.path.abspath(DATA_PATH)
     os.makedirs(abs_data_path, exist_ok=True)
-    start_watcher(
-        on_reingest_callback=rebuild_bm25, # CHECK
+    observer = start_watcher(
+        on_reingest_callback=rebuild_bm25,
         path=abs_data_path
     )
+
+    # Register background resources to enable graceful teardown
+    shutdown_mgr.register_resources(observer=observer, retention=retention)
+
+    # Try registering signal handlers for graceful shutdown (signal only works in main thread)
+    try:
+        import signal
+        signal.signal(signal.SIGTERM, shutdown_mgr.handle_signal)
+        signal.signal(signal.SIGINT, shutdown_mgr.handle_signal)
+        logger.info("Signal handlers registered for SIGTERM and SIGINT.")
+    except ValueError:
+        logger.warning("Could not register signal handlers (must run in main thread).")
 
     logger.info("FAQ-Chatbot application started.")
     return app

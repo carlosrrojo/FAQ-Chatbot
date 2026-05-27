@@ -19,6 +19,7 @@ def app():
          patch("src.transport.app.InstagramClient") as mock_ig_cls, \
          patch("src.transport.app.RAGOrchestrator") as mock_orch_cls, \
          patch("src.transport.app.InMemoryDeduplicationStore") as mock_dedup_cls, \
+         patch("src.transport.app.RetentionScheduler") as mock_ret_cls, \
          patch("src.transport.app.start_watcher"):
         
         mock_wa = mock_wa_cls.return_value
@@ -34,6 +35,7 @@ def app():
             "IG_CLIENT": mock_ig,
             "ORCHESTRATOR": mock_orch,
             "DEDUP_STORE": mock_dedup,
+            "SHUTDOWN_MANAGER": None,
         })
         yield app
 
