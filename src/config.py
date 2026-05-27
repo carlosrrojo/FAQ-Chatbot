@@ -61,3 +61,7 @@ TELEMETRY_ENABLED: bool = True
 # ── Deduplication ─────────────────────────────────────────────────────────────
 DEDUP_TTL_SECONDS: int = 300       # 5 min — covers Meta's retry window
 DEDUP_MAX_SIZE: int = 10_000       # Max tracked message IDs before eviction
+
+# ── Backups ───────────────────────────────────────────────────────────────────
+BACKUP_DIR = os.getenv("BACKUP_DIR", "data/backups")
+BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "7"))
