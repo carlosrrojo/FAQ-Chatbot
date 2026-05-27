@@ -18,11 +18,14 @@ def app():
          patch("src.transport.app.WhatsAppClient") as mock_wa_cls, \
          patch("src.transport.app.InstagramClient") as mock_ig_cls, \
          patch("src.transport.app.RAGOrchestrator") as mock_orch_cls, \
+         patch("src.transport.app.InMemoryDeduplicationStore") as mock_dedup_cls, \
          patch("src.transport.app.start_watcher"):
         
         mock_wa = mock_wa_cls.return_value
         mock_ig = mock_ig_cls.return_value
         mock_orch = mock_orch_cls.return_value
+        mock_dedup = mock_dedup_cls.return_value
+        mock_dedup.is_duplicate.return_value = False  # default: no dupes
 
         app = create_app()
         app.config.update({
@@ -30,6 +33,7 @@ def app():
             "WA_CLIENT": mock_wa,
             "IG_CLIENT": mock_ig,
             "ORCHESTRATOR": mock_orch,
+            "DEDUP_STORE": mock_dedup,
         })
         yield app
 
@@ -207,4 +211,54 @@ def test_whatsapp_non_text_message_handling(client, app, media_type, media_paylo
     assert call_args.sender_id == "123456789"
     from src.transport.webhook_controller import _UNSUPPORTED_TYPE_RESPONSE_ES
     assert call_args.text == _UNSUPPORTED_TYPE_RESPONSE_ES
+
+
+@patch("src.transport.webhook_controller.threading.Thread", new=SyncThread)
+def test_duplicate_whatsapp_message_is_suppressed(client, app):
+    """FR-CHN-07: duplicate message_id must not trigger a second reply."""
+    dedup = app.config["DEDUP_STORE"]
+    dedup.is_duplicate.return_value = True  # simulate duplicate
+
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{"changes": [{"value": {"messages": [{
+            "id": "msg_dup",
+            "from": "123456789",
+            "type": "text",
+            "text": {"body": "Hello bot"},
+        }]}}]}],
+    }
+
+    response = client.post("/webhook", json=payload)
+    assert response.status_code == 200
+
+    mock_orch = app.config["ORCHESTRATOR"]
+    mock_wa = app.config["WA_CLIENT"]
+    mock_orch.generate_reply.assert_not_called()
+    mock_wa.send_reply.assert_not_called()
+    mock_wa.mark_as_read.assert_not_called()
+
+
+@patch("src.transport.webhook_controller.threading.Thread", new=SyncThread)
+def test_duplicate_instagram_message_is_suppressed(client, app):
+    """FR-CHN-07: duplicate Instagram mid must not trigger a second reply."""
+    dedup = app.config["DEDUP_STORE"]
+    dedup.is_duplicate.return_value = True  # simulate duplicate
+
+    payload = {
+        "object": "instagram",
+        "entry": [{"messaging": [{"sender": {"id": "987654321"}, "message": {
+            "mid": "mid_dup",
+            "text": "Hello insta",
+        }}]}],
+    }
+
+    response = client.post("/webhook", json=payload)
+    assert response.status_code == 200
+
+    mock_orch = app.config["ORCHESTRATOR"]
+    mock_ig = app.config["IG_CLIENT"]
+    mock_orch.generate_reply.assert_not_called()
+    mock_ig.send_reply.assert_not_called()
+
 

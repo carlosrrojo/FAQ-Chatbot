@@ -6,6 +6,7 @@ from src.config import DATA_PATH
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.infrastructure.channels.whatsapp_client import WhatsAppClient
 from src.infrastructure.channels.instagram_client import InstagramClient
+from src.infrastructure.deduplication import InMemoryDeduplicationStore
 from src.domain.orchestrator import RAGOrchestrator
 from src.transport.webhook_controller import webhook_bp
 from src.infrastructure.retrieval.hybrid_retriever import HybridRetriever
@@ -32,6 +33,7 @@ def create_app() -> Flask:
     memory = SqliteMemoryAdapter()
     wa_client = WhatsAppClient()
     ig_client = InstagramClient()
+    dedup_store = InMemoryDeduplicationStore()
 
     # Domain
     orchestrator = RAGOrchestrator(memory_store=memory)
@@ -40,6 +42,7 @@ def create_app() -> Flask:
     app.config["ORCHESTRATOR"] = orchestrator
     app.config["WA_CLIENT"] = wa_client
     app.config["IG_CLIENT"] = ig_client
+    app.config["DEDUP_STORE"] = dedup_store
 
     
     app.register_blueprint(webhook_bp)

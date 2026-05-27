@@ -56,3 +56,7 @@ INSTAGRAM_MAX_CHARS: int = 1000    # Instagram DM practical limit
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
 TELEMETRY_ENABLED: bool = True
+
+# ── Deduplication ─────────────────────────────────────────────────────────────
+DEDUP_TTL_SECONDS: int = 300       # 5 min — covers Meta's retry window
+DEDUP_MAX_SIZE: int = 10_000       # Max tracked message IDs before eviction

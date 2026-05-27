@@ -44,3 +44,12 @@ class IMessageChannel(ABC):
     def mark_as_read(self, message_id: str) -> None:
         """Signal read receipt where supported by the platform."""
         ...
+
+
+class IDeduplicationStore(ABC):
+    """Port: inbound message deduplication. FR-CHN-07."""
+
+    @abstractmethod
+    def is_duplicate(self, message_id: str) -> bool:
+        """Return True if message_id was already processed; mark it as seen."""
+        ...

@@ -14,12 +14,14 @@ def parse_instagram_payload(data: dict) -> tuple[ChatRequest, str]:
     message = messaging.get("message", {})
     msg_type = "text" if "text" in message else "unsupported"
     text = message.get("text", "")
+    message_id = message.get("mid")
 
     return (
         ChatRequest(
             platform=Platform.INSTAGRAM,
             sender_id=sender_id,
             text=text,
+            message_id=message_id,
         ),
         msg_type,
     )

@@ -105,6 +105,7 @@ def _handle_whatsapp(data: dict, app) -> None:
     with app.app_context():
         orchestrator = app.config["ORCHESTRATOR"]
         wa_client = app.config["WA_CLIENT"]
+        dedup_store = app.config["DEDUP_STORE"]
 
         try:
             result = parse_whatsapp_payload(data)
@@ -116,6 +117,10 @@ def _handle_whatsapp(data: dict, app) -> None:
             return
 
         chat_request, message_id, msg_type = result
+
+        # ── Deduplication guard (FR-CHN-07) ────────────────────────
+        if message_id and dedup_store.is_duplicate(message_id):
+            return
 
         if msg_type != "text":
             # FR-CHN-05: graceful handling of non-text message types
@@ -139,11 +144,16 @@ def _handle_instagram(data: dict, app) -> None:
     with app.app_context():
         orchestrator = app.config["ORCHESTRATOR"]
         ig_client = app.config["IG_CLIENT"]
+        dedup_store = app.config["DEDUP_STORE"]
 
         try:
             chat_request, msg_type = parse_instagram_payload(data)
         except (KeyError, IndexError, ValueError):
             logger.warning("Could not parse Instagram payload.", exc_info=True)
+            return
+
+        # ── Deduplication guard (FR-CHN-07) ────────────────────────
+        if chat_request.message_id and dedup_store.is_duplicate(chat_request.message_id):
             return
 
         if msg_type != "text":
