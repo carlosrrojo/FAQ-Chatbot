@@ -93,3 +93,7 @@ SECURITY_SCORE_MIN: int = 0           # ordinal scale lower bound
 SECURITY_SCORE_MAX: int = 2           # ordinal scale upper bound (clean pass)
 SECURITY_JUDGE_MODEL_OLLAMA: str = MODEL_NAME      # reuse the main LLM
 SECURITY_JUDGE_MODEL_GEMINI: str = "gemini-flash-latest"
+
+# ── Agent System Prompt Template Path ─────────────────────────────────────────
+SYSTEM_PROMPT_PATH: str = "prompts/system_prompt.md"
+QUERY_METADATA_PROMPT_PATH: str = "prompts/query_metadata_prompt.md"

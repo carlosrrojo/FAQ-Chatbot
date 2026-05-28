@@ -181,3 +181,30 @@ def test_manage_memory_summarization_snapping(mock_llm):
     assert "AI1 response" in prompt_sent
     assert "H2" not in prompt_sent
     assert "AI2 response" not in prompt_sent
+
+
+def test_system_prompt_decoupling():
+    from src.rag.agent import ModelCaller
+    from langchain_core.messages import SystemMessage
+    
+    mock_llm = MagicMock()
+    mock_llm.invoke.return_value = MagicMock(content="Mocked response")
+    
+    with patch("src.rag.agent._llm_with_tools", mock_llm):
+        # 1. Test Static injection at composition time
+        caller = ModelCaller(system_prompt_template="STATIC TEMPLATE: {response_language}")
+        state = {"messages": [HumanMessage(content="Hola, ¿cómo estás? Me gustaría saber el horario.", id="h1")]}
+        caller(state)
+        
+        # Verify the system message format
+        messages_sent = mock_llm.invoke.call_args[0][0]
+        assert isinstance(messages_sent[0], SystemMessage)
+        assert messages_sent[0].content == "STATIC TEMPLATE: Spanish"
+        
+        # 2. Test Dynamic Override via RunnableConfig
+        config = {"configurable": {"system_prompt_template": "DYNAMIC TEMPLATE: {response_language}"}}
+        caller(state, config=config)
+        
+        messages_sent = mock_llm.invoke.call_args[0][0]
+        assert isinstance(messages_sent[0], SystemMessage)
+        assert messages_sent[0].content == "DYNAMIC TEMPLATE: Spanish"

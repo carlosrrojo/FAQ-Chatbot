@@ -18,7 +18,15 @@ def load_benchmark(benchmark_name: str) -> list[str]:
     with open(benchmark_path, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
-
+def load_prompt(path: str) -> str:
+    """Load a prompt from a file."""
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    else:
+        logger.warning("Prompt file not found at %s. Using fallback.", path)
+        return ""
+    
 def get_sections(
     vectorstore: Chroma,
 ) -> set[str]:

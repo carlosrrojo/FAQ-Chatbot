@@ -35,8 +35,9 @@ class RAGOrchestrator:
     - Return ChatResponse
     """
 
-    def __init__(self, memory_store: IMemoryStore) -> None:
+    def __init__(self, memory_store: IMemoryStore, system_prompt_template: str | None = None) -> None:
         self._memory = memory_store
+        self._system_prompt_template = system_prompt_template
         self._agent = self._build_agent()
 
     def _build_agent(self):
@@ -45,8 +46,11 @@ class RAGOrchestrator:
         This method consolidates the graph construction currently in agent.py.
         """
         if self._memory is None:
-            return build_graph(skip_memory=True)
-        return build_graph(checkpointer=self._memory.get_checkpointer())
+            return build_graph(skip_memory=True, system_prompt_template=self._system_prompt_template)
+        return build_graph(
+            checkpointer=self._memory.get_checkpointer(),
+            system_prompt_template=self._system_prompt_template,
+        )
 
     @timed("orchestrator.generate_reply")
     def generate_reply(self, request: ChatRequest) -> ChatResponse:

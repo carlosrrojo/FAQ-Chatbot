@@ -2,7 +2,7 @@
 import logging
 import os
 from flask import Flask
-from src.config import DATA_PATH, CONCURRENT_WORKERS, MAX_QUEUE_DEPTH
+from src.config import DATA_PATH, CONCURRENT_WORKERS, MAX_QUEUE_DEPTH, SYSTEM_PROMPT_PATH
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.infrastructure.channels.whatsapp_client import WhatsAppClient
 from src.infrastructure.channels.instagram_client import InstagramClient
@@ -15,6 +15,7 @@ from src.rag.watcher import start_watcher
 from src.rag.agent import rebuild_bm25
 from src.infrastructure.retention_scheduler import RetentionScheduler
 from src.transport.shutdown import ShutdownManager
+from src.utils import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,14 @@ def create_app() -> Flask:
     ig_client = InstagramClient()
     dedup_store = InMemoryDeduplicationStore()
 
+    # Load system prompt template
+    system_prompt = load_prompt(SYSTEM_PROMPT_PATH)
+
     # Domain
-    orchestrator = RAGOrchestrator(memory_store=memory)
+    orchestrator = RAGOrchestrator(
+        memory_store=memory,
+        system_prompt_template=system_prompt,
+    )
 
     # GDPR retention enforcement (FR-PRV-01)
     retention = RetentionScheduler(memory)
