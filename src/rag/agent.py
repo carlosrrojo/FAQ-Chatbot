@@ -440,7 +440,12 @@ def _manage_memory(state: AgentState) -> dict:
         return {"messages": []}
 
     # 2. Split into messages to remove and messages to keep
-    to_remove = convo_msgs[:-max_messages]
+    # Snap the truncation boundary forwards to the next coherent HumanMessage,
+    # never severing a tool-call/tool-result pair.
+    cut_idx = len(convo_msgs) - max_messages
+    while cut_idx < len(convo_msgs) and convo_msgs[cut_idx].__class__.__name__ != "HumanMessage":
+        cut_idx += 1
+    to_remove = convo_msgs[:cut_idx]
 
     # 3. If summarization is disabled, perform standard hard truncation
     if not CONVERSATION_SUMMARIZATION_ENABLED:

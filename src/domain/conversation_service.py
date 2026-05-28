@@ -23,10 +23,15 @@ def truncate_history(messages: list[BaseMessage]) -> list[BaseMessage]:
 
     max_messages = MAX_HISTORY_TURNS * 2   # pairs of (human, AI)
     if len(convo_msgs) > max_messages:
+        cut_idx = len(convo_msgs) - max_messages
+        # Snap the boundary forwards to the next coherent HumanMessage
+        while cut_idx < len(convo_msgs) and convo_msgs[cut_idx].__class__.__name__ != "HumanMessage":
+            cut_idx += 1
+            
         logger.debug(
             "History truncated: %d → %d messages (window=%d turns)",
-            len(convo_msgs), max_messages, MAX_HISTORY_TURNS
+            len(convo_msgs), len(convo_msgs) - cut_idx, MAX_HISTORY_TURNS
         )
-        convo_msgs = convo_msgs[-max_messages:]
+        convo_msgs = convo_msgs[cut_idx:]
 
     return system_msgs + convo_msgs

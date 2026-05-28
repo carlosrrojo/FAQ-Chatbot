@@ -70,3 +70,114 @@ def test_build_graph():
         graph = build_graph(skip_memory=True)
         assert graph is not None
         assert hasattr(graph, "invoke")
+
+
+def test_truncate_history_snapping():
+    from src.domain.conversation_service import truncate_history
+    from langchain_core.messages import SystemMessage, ToolMessage
+    
+    # Setup test messages: System + 6 convo messages. MAX_HISTORY_TURNS = 2 (so max_messages = 4)
+    # 0: Human
+    # 1: AI (with tool call)
+    # 2: Tool (tool response) - tentative truncation boundary starts here (len 6 - 4 = index 2)
+    # 3: AI (final turn response)
+    # 4: Human (next turn start)
+    # 5: AI
+    sys_msg = SystemMessage(content="System")
+    messages = [
+        sys_msg,
+        HumanMessage(content="H1", id="h1"),
+        AIMessage(content="AI1 with tool call", id="ai1", tool_calls=[{"name": "tool", "args": {}, "id": "tc1"}]),
+        ToolMessage(content="Tool result", id="t1", tool_call_id="tc1"),
+        AIMessage(content="AI1 response", id="ai2"),
+        HumanMessage(content="H2", id="h2"),
+        AIMessage(content="AI2 response", id="ai3"),
+    ]
+    
+    # We patch MAX_HISTORY_TURNS to 2 for this test
+    with patch("src.domain.conversation_service.MAX_HISTORY_TURNS", 2):
+        truncated = truncate_history(messages)
+        
+    # Boundary should snap forwards from index 2 (ToolMessage) to index 4 (HumanMessage "h2")
+    # Kept conversation messages should be only "h2" and "ai3"
+    assert len(truncated) == 3
+    assert truncated[0] == sys_msg
+    assert truncated[1].id == "h2"
+    assert truncated[2].id == "ai3"
+
+
+@patch("src.rag.agent.CONVERSATION_SUMMARIZATION_ENABLED", False)
+def test_manage_memory_hard_truncation_snapping():
+    from langchain_core.messages import ToolMessage
+    # Setup test messages: 6 convo messages. MAX_HISTORY_TURNS = 2 (max_messages = 4)
+    # 0: Human
+    # 1: AI (with tool call)
+    # 2: Tool (tool response) - tentative boundary
+    # 3: AI (final turn response)
+    # 4: Human (next turn start)
+    # 5: AI
+    messages = [
+        HumanMessage(content="H1", id="h1"),
+        AIMessage(content="AI1 with tool call", id="ai1", tool_calls=[{"name": "tool", "args": {}, "id": "tc1"}]),
+        ToolMessage(content="Tool result", id="t1", tool_call_id="tc1"),
+        AIMessage(content="AI1 response", id="ai2"),
+        HumanMessage(content="H2", id="h2"),
+        AIMessage(content="AI2 response", id="ai3"),
+    ]
+    
+    with patch("src.rag.agent.MAX_HISTORY_TURNS", 2):
+        result = _manage_memory({"messages": messages})
+        
+    # Snaps forward to index 4 (HumanMessage "h2").
+    # Therefore, indices 0, 1, 2, and 3 must be removed.
+    removed = result["messages"]
+    assert len(removed) == 4
+    remove_ids = [m.id for m in removed]
+    assert "h1" in remove_ids
+    assert "ai1" in remove_ids
+    assert "t1" in remove_ids
+    assert "ai2" in remove_ids
+
+
+@patch("src.rag.agent._llm")
+def test_manage_memory_summarization_snapping(mock_llm):
+    from langchain_core.messages import ToolMessage, SystemMessage
+    mock_llm.invoke.return_value = MagicMock(content="Summary of first turn.")
+
+    # Setup test messages: 6 convo messages. MAX_HISTORY_TURNS = 2 (max_messages = 4)
+    messages = [
+        HumanMessage(content="H1", id="h1"),
+        AIMessage(content="AI1 with tool call", id="ai1", tool_calls=[{"name": "tool", "args": {}, "id": "tc1"}]),
+        ToolMessage(content="Tool result", id="t1", tool_call_id="tc1"),
+        AIMessage(content="AI1 response", id="ai2"),
+        HumanMessage(content="H2", id="h2"),
+        AIMessage(content="AI2 response", id="ai3"),
+    ]
+
+    with patch("src.rag.agent.MAX_HISTORY_TURNS", 2), \
+         patch("src.rag.agent.CONVERSATION_SUMMARIZATION_ENABLED", True):
+        result = _manage_memory({"messages": messages})
+
+    # Expected: remove h1, ai1, t1, ai2, and add a summary SystemMessage
+    returned_messages = result["messages"]
+    assert len(returned_messages) == 5  # 4 RemoveMessages + 1 SystemMessage (summary)
+    
+    remove_ids = [m.id for m in returned_messages if isinstance(m, RemoveMessage)]
+    assert len(remove_ids) == 4
+    assert "h1" in remove_ids
+    assert "ai1" in remove_ids
+    assert "t1" in remove_ids
+    assert "ai2" in remove_ids
+
+    summary_msg = [m for m in returned_messages if isinstance(m, SystemMessage)][0]
+    assert summary_msg.id == "conversation_summary"
+    assert "Summary of first turn" in summary_msg.content
+
+    # Verify LLM prompt contains the snapped messages and not the kept ones
+    prompt_sent = mock_llm.invoke.call_args[0][0]
+    assert "H1" in prompt_sent
+    assert "AI1 with tool call" in prompt_sent
+    assert "Tool result" in prompt_sent
+    assert "AI1 response" in prompt_sent
+    assert "H2" not in prompt_sent
+    assert "AI2 response" not in prompt_sent
