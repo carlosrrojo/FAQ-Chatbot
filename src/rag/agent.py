@@ -229,6 +229,29 @@ def _apply_metadata_filter(
     return [(doc, score) for doc, score in hits if _passes(doc, chroma_filter)]
 
 
+def _translate_query_to_es(query: str, source_lang: str) -> str:
+    """
+    Translates a non-Spanish user query (EN, FR, DE, etc.) into Spanish for retrieval.
+    """
+    if source_lang == "es":
+        return query
+    
+    translation_prompt = (
+        "Translate the following user search query into Spanish. "
+        "Preserve all specific entities, numbers, and proper nouns. "
+        "Return ONLY the translated Spanish query, nothing else.\n\n"
+        f"Query: {query}"
+    )
+    try:
+        translated = _llm.invoke([{"role": "user", "content": translation_prompt}])
+        translated_text = translated.content.strip()
+        logger.info("Translated query for retrieval (%s -> es): '%s' -> '%s'", source_lang, query, translated_text)
+        return translated_text
+    except Exception:
+        logger.exception("Query translation failed; falling back to original query.")
+        return query
+
+
 # ---------------------------------------------------------------------------
 # Retrieval tool
 # ---------------------------------------------------------------------------
@@ -242,8 +265,18 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     Returns both a serialised string (for the LLM context) and the raw
     Document objects (artifact, for downstream use).
     """
+    # 0. Detect and translate query if non-Spanish
+    try:
+        lang_code = _detect_lang(query) if len(query.strip()) >= 3 else "es"
+    except Exception:
+        lang_code = "es"
+
+    retrieval_query = query
+    if lang_code != "es":
+        retrieval_query = _translate_query_to_es(query, lang_code)
+
     # 1. Derive metadata filter + augment query with extracted keywords
-    search_filter = _build_section_filter(query)
+    search_filter = _build_section_filter(retrieval_query)
     #logger.debug("Search filter: %s", search_filter)
     
     # Re-extract keywords to append to the query (improves both indexes)
@@ -252,10 +285,10 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     try:
         meta: QueryMetadata = _metadata_extractor.invoke([
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query}
+            {"role": "user", "content": retrieval_query}
         ])
         #if meta.keywords:
-            #query = query + " " + " ".join(meta.keywords)
+            #retrieval_query = retrieval_query + " " + " ".join(meta.keywords)
     except Exception:
         logger.warning("Keyword augmentation failed; using original query.")
 
@@ -266,13 +299,13 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     try:
         # --- Dense: unfiltered (broad recall) ---
         unfiltered = _vectorstore.similarity_search_with_relevance_scores(
-            query=query, k=HYBRID_K,
+            query=retrieval_query, k=HYBRID_K,
         )
 
         # --- Dense: filtered (section boost) ---
         if search_filter:
             filtered = _vectorstore.similarity_search_with_relevance_scores(
-                query=query, k=HYBRID_K, filter=search_filter,
+                query=retrieval_query, k=HYBRID_K, filter=search_filter,
             )
         else:
             filtered = []
@@ -288,14 +321,14 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         dense_hits = sorted(seen.values(), key=lambda x: x[1], reverse=True)[:HYBRID_K]
 
         # --- Sparse (BM25) — no hard filter either ---
-        sparse_hits = _bm25_index.search(query, k=HYBRID_K)
+        sparse_hits = _bm25_index.search(retrieval_query, k=HYBRID_K)
 
         rrf_docs = _reciprocal_rank_fusion(dense_hits, sparse_hits, k=RRF_K, top_n=HYBRID_K)
-        docs, best_score = rerank(query, rrf_docs, top_n=TOP_K)
+        docs, best_score = rerank(retrieval_query, rrf_docs, top_n=TOP_K)
 
     except Exception:
         logger.exception("Retrieval failed; falling back to simple retrieve.")
-        docs = _vectorstore.as_retriever().invoke(query)
+        docs = _vectorstore.as_retriever().invoke(retrieval_query)
         best_score = float("-inf")
 
     serialized = "\n\n".join(

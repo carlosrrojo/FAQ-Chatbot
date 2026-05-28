@@ -21,6 +21,16 @@ _OOS_RESPONSES = {
         "about Espazo Nature. For more specific enquiries, please contact us directly. "
         "Can I help you with something related to our accommodation, services, or surroundings?"
     ),
+    "fr": (
+        "Désolé, cette question sort du cadre des informations que je peux fournir sur Espazo Nature. "
+        "Pour des demandes plus spécifiques, veuillez nous contacter directement. "
+        "Puis-je vous aider pour quelque chose concernant nos hébergements, nos services ou notre environnement ?"
+    ),
+    "de": (
+        "Es tut mir leid, diese Frage liegt außerhalb des Rahmens der Informationen, die ich über Espazo Nature bereitstellen kann. "
+        "Für spezifischere Anfragen wenden Sie sich bitte direkt an uns. "
+        "Kann ich Ihnen bei Fragen zu unseren Unterkünften, Dienstleistungen oder der Umgebung helfen?"
+    ),
 }
 
 

@@ -11,9 +11,13 @@ Also provides a separate security / privacy compliance judge
 (FR-EVL-02) that scores behavioural rubrics on an ordinal 0-1-2 scale.
 """
 
-from benchmarks.eval_data import FAQ_QUERIES_ENGLISH
-from benchmarks.eval_data import FAQ_QUERIES
-from benchmarks.eval_data import SECURITY_DATA
+from benchmarks.eval_data import (
+    FAQ_QUERIES,
+    FAQ_QUERIES_ENGLISH,
+    FAQ_QUERIES_FRENCH,
+    FAQ_QUERIES_GERMAN,
+    SECURITY_DATA
+)
 from src.config import (
     COLLECTION, EMBEDDING_MODEL,
     SECURITY_SCORE_MIN, SECURITY_SCORE_MAX,
@@ -38,8 +42,6 @@ from langchain_chroma import Chroma
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
-
-from benchmarks.eval_data import FAQ_QUERIES, FAQ_QUERIES_ENGLISH
 from langchain_core.globals import set_debug
 from src.rag.agent import retrieve_documents
 from src.domain.orchestrator import RAGOrchestrator
@@ -49,10 +51,9 @@ from src.infrastructure.embeddings import get_embeddings
 import src.rag.agent
 
 set_debug(False)
-
 logger = logging.getLogger(__name__)
 
-EVAL_DATA = FAQ_QUERIES
+EVAL_DATA = FAQ_QUERIES + FAQ_QUERIES_ENGLISH + FAQ_QUERIES_FRENCH + FAQ_QUERIES_GERMAN
 
 
 # FR-EVL-01 AC-1: minimum score thresholds (Gemini judge, Spanish partition)
@@ -212,27 +213,54 @@ def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", 
             "answer_relevancy": [],
             "context_precision":[],
             "context_recall":  [],
+        },
+        "fr": {
+            "faithfulness":    [],
+            "answer_relevancy": [],
+            "context_precision":[],
+            "context_recall":  [],
+        },
+        "de": {
+            "faithfulness":    [],
+            "answer_relevancy": [],
+            "context_precision":[],
+            "context_recall":  [],
         }
     }
     per_query: list[dict] = []
     retrieval_latencies: list[float] = []   # seconds
     e2e_latencies: list[float] = []         # seconds
 
+    def is_oos(item):
+        gt = item.get("ground_truth", "")
+        return (
+            "fuera del ámbito" in gt or
+            "outside the scope" in gt or
+            "Désolé, cette question" in gt or
+            "Es tut mir leid" in gt
+        )
+
     if limit:
-        es_in = [item for item in EVAL_DATA if item.get("language") == "es" and not ("fuera del ámbito" in item["ground_truth"] or "outside the scope" in item["ground_truth"])]
-        en_in = [item for item in EVAL_DATA if item.get("language") == "en" and not ("fuera del ámbito" in item["ground_truth"] or "outside the scope" in item["ground_truth"])]
-        oos = [item for item in EVAL_DATA if "fuera del ámbito" in item["ground_truth"] or "outside the scope" in item["ground_truth"]]
+        es_in = [item for item in EVAL_DATA if item.get("language") == "es" and not is_oos(item)]
+        en_in = [item for item in EVAL_DATA if item.get("language") == "en" and not is_oos(item)]
+        fr_in = [item for item in EVAL_DATA if item.get("language") == "fr" and not is_oos(item)]
+        de_in = [item for item in EVAL_DATA if item.get("language") == "de" and not is_oos(item)]
+        oos = [item for item in EVAL_DATA if is_oos(item)]
         
         eval_items = []
         from math import ceil
-        n_es = min(len(es_in), ceil(limit * 0.4))
-        n_en = min(len(en_in), ceil(limit * 0.4))
-        n_oos = min(len(oos), limit - n_es - n_en)
+        n_es = min(len(es_in), ceil(limit * 0.3))
+        n_en = min(len(en_in), ceil(limit * 0.2))
+        n_fr = min(len(fr_in), ceil(limit * 0.2))
+        n_de = min(len(de_in), ceil(limit * 0.2))
+        n_oos = min(len(oos), limit - n_es - n_en - n_fr - n_de)
         if n_oos < 0:
             n_oos = 0
             
         eval_items.extend(es_in[:n_es])
         eval_items.extend(en_in[:n_en])
+        eval_items.extend(fr_in[:n_fr])
+        eval_items.extend(de_in[:n_de])
         eval_items.extend(oos[:n_oos])
         
         remaining = limit - len(eval_items)
