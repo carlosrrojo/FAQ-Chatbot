@@ -7,6 +7,7 @@ during the ingestion pipeline.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -15,7 +16,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field, asdict
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.infrastructure.cache.metadata_cache import MetadataCache
 
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
@@ -160,12 +164,14 @@ class MetadataExtractor:
     ----------
     llm_model   : Ollama model name (default: llama3)
     temperature : LLM temperature — keep at 0.0 for deterministic extraction
+    cache       : optional MetadataCache for persistent memoisation
     """
 
     def __init__(
         self,
         llm_model:   str   = LLM_MODEL,
         temperature: float = TEMPERATURE,
+        cache: "MetadataCache | None" = None,
     ):
         self.llm = ChatOllama(model=llm_model, temperature=temperature)
         self._chain = (
@@ -173,31 +179,75 @@ class MetadataExtractor:
             | self.llm
             | StrOutputParser()
         )
+        self._cache = cache
+        # Extraction version: hash of prompt + model so cache auto-invalidates
+        # when either changes.
+        version_input = EXTRACTION_PROMPT + llm_model
+        self._extraction_version = hashlib.sha256(
+            version_input.encode()
+        ).hexdigest()[:12]
+        logger.debug(
+            "MetadataExtractor initialised (model=%s, extraction_version=%s, cache=%s)",
+            llm_model, self._extraction_version, "enabled" if cache else "disabled",
+        )
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _build_cache_key(
+        content: str,
+        section: str,
+        parent_section: str,
+        extraction_version: str,
+    ) -> str:
+        """Compute a deterministic cache key from chunk content and structural metadata."""
+        payload = "\x00".join([content, section, parent_section, extraction_version])
+        return hashlib.sha256(payload.encode()).hexdigest()
+
     def extract(
         self,
         text:      str,
         entity_id: Optional[str] = None,
+        section: str = "",
+        parent_section: str = "",
     ) -> EntityRecord:
         """
         Extract metadata from a single text chunk.
 
         Parameters
         ----------
-        text      : raw chunk text (Spanish)
-        entity_id : optional ID — auto-generated UUID if not provided
+        text             : raw chunk text (Spanish)
+        entity_id        : optional ID — auto-generated UUID if not provided
+        section          : section heading (used for cache key)
+        parent_section   : parent section heading (used for cache key)
 
         Returns
         -------
         EntityRecord with entity_id, entity_type, and ExtractedMetadata
         """
         eid = entity_id or str(uuid.uuid4())
+
+        # --- Cache lookup (if a cache is available) ---
+        if self._cache is not None:
+            cache_key = self._build_cache_key(
+                text, section, parent_section, self._extraction_version,
+            )
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return self._parse_from_dict(cached, eid)
+
+        # --- Cache miss or no cache: invoke the LLM ---
         raw = self._chain.invoke({"text": text})
-        return self._parse(raw, eid)
+        record = self._parse(raw, eid)
+
+        # --- Write back to cache ---
+        if self._cache is not None:
+            from src.config import MODEL_NAME
+            self._cache.set(cache_key, record.to_dict(), MODEL_NAME)
+
+        return record
 
     def extract_batch(
         self,
@@ -227,12 +277,14 @@ class MetadataExtractor:
         self,
         text:      str,
         entity_id: Optional[str] = None,
+        section: str = "",
+        parent_section: str = "",
     ) -> dict:
         """
         Convenience wrapper — returns a flat dict ready to set as
         LangChain Document.metadata. Lists are comma-joined for Chroma.
         """
-        return self.extract(text, entity_id).to_langchain_metadata()
+        return self.extract(text, entity_id, section, parent_section).to_langchain_metadata()
 
     # ------------------------------------------------------------------
     # Parsing + validation
@@ -280,6 +332,41 @@ class MetadataExtractor:
         return EntityRecord(
             entity_id   = entity_id,
             entity_type = entity_type,
+            metadata    = meta,
+        )
+
+    @staticmethod
+    def _parse_from_dict(data: dict, entity_id: str) -> EntityRecord:
+        """Reconstruct an EntityRecord from a previously cached dict.
+
+        The cached dict is the output of ``EntityRecord.to_dict()`` and has
+        already been validated; this avoids re-running fuzzy matching.
+        """
+        meta_data = data.get("metadata", {})
+        # Lists may be stored as comma-separated strings from Chroma flattening
+        def _to_list(val):
+            if isinstance(val, list):
+                return val
+            if isinstance(val, str) and val:
+                return [v.strip() for v in val.split(",") if v.strip()]
+            return []
+
+        meta = ExtractedMetadata(
+            section            = meta_data.get("section", ""),
+            subsection         = meta_data.get("subsection", ""),
+            content_type       = meta_data.get("content_type", "descripcion"),
+            accommodation_type = meta_data.get("accommodation_type") or None,
+            capacity           = _to_list(meta_data.get("capacity", [])),
+            features           = _to_list(meta_data.get("features", [])),
+            services           = _to_list(meta_data.get("services", [])),
+            location           = _to_list(meta_data.get("location", [])),
+            environment        = _to_list(meta_data.get("environment", [])),
+            activities         = _to_list(meta_data.get("activities", [])),
+            target_audience    = _to_list(meta_data.get("target_audience", [])),
+        )
+        return EntityRecord(
+            entity_id   = entity_id,
+            entity_type = data.get("entity_type", "general"),
             metadata    = meta,
         )
 
@@ -369,6 +456,8 @@ def enrich_document(
     extracted = extractor.extract_to_langchain_metadata(
         text      = doc.page_content,
         entity_id = entity_id or doc.metadata.get("entity_id"),
+        section   = doc.metadata.get("section", ""),
+        parent_section = doc.metadata.get("parent_section", ""),
     )
     hijos = "\n".join(extras)
     if len(extras) > 1:

@@ -103,10 +103,21 @@ def rebuild_bm25() -> None:
     Called by the file watcher (FR-ING-05) after a successful re-ingestion
     so that the sparse index stays in sync with the updated vector store.
     """
-    global _chroma_snapshot
-    logger.info("Rebuilding BM25 index after re-ingestion...")
+    global _vectorstore, _bm25_index, _chroma_snapshot
+    logger.info("Rebuilding BM25 index and reloading vectorstore after re-ingestion...")
+    
+    from src.config import get_active_collection_name
+    active_col = get_active_collection_name()
+    logger.info("Updating vectorstore to use active collection: %s", active_col)
+    
+    _vectorstore = Chroma(
+        collection_name=active_col,
+        embedding_function=embeddings,
+        persist_directory=DB_PATH,
+    )
     _chroma_snapshot = _vectorstore.get()
-    _bm25_index.rebuild()
+    _bm25_index = BM25Retriever(_vectorstore)
+    logger.info("Vectorstore and BM25 index rebuild complete.")
 
 # ---------------------------------------------------------------------------
 # Metadata extraction (query → section + keywords)

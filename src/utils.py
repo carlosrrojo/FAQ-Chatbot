@@ -37,15 +37,14 @@ def stable_id(content: str, metadata: dict) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:32]
 
 
-# Add to end of src/rag/ingest.py, inside the main ingestion function
-def write_manifest(source_files: list[str], chunks_per_file: dict[str, int]) -> None:
+def write_manifest(source_files: list[str], chunks_per_file: dict[str, int], collection_name: str = None) -> None:
     """
     Writes a JSON manifest capturing this ingestion run's provenance.
     FR-ING-07: Enables evaluation result traceability.
     """
     manifest = {
         "ingested_at": datetime.now(timezone.utc).isoformat(),
-        "collection": COLLECTION,
+        "collection": collection_name or COLLECTION,
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
         "total_chunks": sum(chunks_per_file.values()),

@@ -8,6 +8,7 @@ Evaluates the retrieve → generate pipeline using four metrics:
   - Context Recall    (context covers the ground-truth answer)
 """
 
+from benchmarks.eval_data import FAQ_QUERIES_ENGLISH
 from benchmarks.eval_data import FAQ_QUERIES
 from src.config import COLLECTION, EMBEDDING_MODEL
 from sqlalchemy.orm.collections import collection
@@ -28,7 +29,7 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
 
-from benchmarks.eval_data import FAQ_QUERIES
+from benchmarks.eval_data import FAQ_QUERIES, FAQ_QUERIES_ENGLISH
 from langchain_core.globals import set_debug
 from src.rag.agent import retrieve_documents
 from src.domain.orchestrator import RAGOrchestrator
@@ -168,7 +169,7 @@ def calculate_context_precision(
 # Main evaluator
 # ---------------------------------------------------------------------------
 
-def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", limit: int = None) -> dict:
+def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", limit: int = None, disable_memory: bool = False) -> dict:
     """
     Run the full evaluation harness.
     Returns the structured report dict (also persisted as JSON to ``evals/``).
@@ -249,7 +250,7 @@ def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", 
         contexts = [doc.page_content for doc in retrieved_docs]
 
         # ── Timed end-to-end (AC-4 / NFR-PERF-01) ────────────────────
-        use_memory = item.get("memory", False)
+        use_memory = item.get("memory", False) and not disable_memory
         orch = orchestrator_mem if use_memory else orchestrator_no_mem
         t_e2e_start = time.perf_counter()
         answer = orch.generate_reply(
@@ -406,6 +407,10 @@ if __name__ == "__main__":
         "--limit", type=int, default=None,
         help="Limit the number of benchmark queries to evaluate (default: None, evaluate all)",
     )
+    parser.add_argument(
+        "--no-memory", action="store_true",
+        help="Deactivate conversation memory support during evaluation",
+    )
     args = parser.parse_args()
 
-    run_evaluator(COLLECTION, evaluator=args.evaluator, limit=args.limit)
+    run_evaluator(COLLECTION, evaluator=args.evaluator, limit=args.limit, disable_memory=args.no_memory)

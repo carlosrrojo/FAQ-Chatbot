@@ -94,7 +94,7 @@ class SqliteMemoryAdapter(IMemoryStore):
             conn.commit()
 
         logger.info(
-            "FR-PRV-01 retention purge: deleted %d expired session(s) (TTL=%d days)",
+            "GDPR retention purge: deleted %d expired session(s) (TTL=%d days)",
             len(expired), ttl_days,
         )
         return len(expired)

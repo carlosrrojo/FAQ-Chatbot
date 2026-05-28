@@ -1,5 +1,6 @@
 from sqlalchemy import true
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,11 +26,25 @@ DATA_PATH  = "data/documents"
 
 MEMORY_DB_PATH: str = "data/memory.sqlite"        # FR-MEM-02
 MANIFEST_PATH: str = "data/chroma_db/ingest_manifest.json"   # FR-ING-07
+METADATA_CACHE_DB_PATH: str = "data/metadata_cache.sqlite"   # FR-ING-06: LLM extraction cache
 
 # ── ChromaDB ───────────────────────────────────────────────────────
 CHUNK_SIZE: int = 1024
 CHUNK_OVERLAP: int = 256
-COLLECTION = EMBEDDING_MODEL.replace("/", "-") + "_espazo_nature_" + str(CHUNK_SIZE)
+ACTIVE_COLLECTION_PATH = os.path.join(DB_PATH, "active_collection.json")
+
+def get_active_collection_name() -> str:
+    base_name = EMBEDDING_MODEL.replace("/", "-") + "_espazo_nature_" + str(CHUNK_SIZE)
+    if os.path.exists(ACTIVE_COLLECTION_PATH):
+        try:
+            with open(ACTIVE_COLLECTION_PATH, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+                return data.get("active_collection", base_name)
+        except Exception:
+            pass
+    return base_name
+
+COLLECTION = get_active_collection_name()
 
 # ── Retrieval pipeline hyperparameters ────────────────────────────────────────────────────────
 HYBRID_K = 20  # candidates fetched from each index (dense + sparse) before RRF
