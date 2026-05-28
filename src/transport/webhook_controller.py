@@ -89,7 +89,9 @@ def receive():
 
     if platform_object == "whatsapp_business_account":
         if shutdown_mgr:
-            shutdown_mgr.submit_task(_handle_whatsapp, data, current_app._get_current_object())
+            future = shutdown_mgr.submit_task(_handle_whatsapp, data, current_app._get_current_object())
+            if future is None:
+                return jsonify({"error": "Service Temporarily Unavailable"}), 503
         else:
             thread = threading.Thread(
                 target=_handle_whatsapp,
@@ -99,7 +101,9 @@ def receive():
             thread.start()
     elif platform_object == "instagram":
         if shutdown_mgr:
-            shutdown_mgr.submit_task(_handle_instagram, data, current_app._get_current_object())
+            future = shutdown_mgr.submit_task(_handle_instagram, data, current_app._get_current_object())
+            if future is None:
+                return jsonify({"error": "Service Temporarily Unavailable"}), 503
         else:
             thread = threading.Thread(
                 target=_handle_instagram,

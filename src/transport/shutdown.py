@@ -16,8 +16,10 @@ class ShutdownManager:
     drains in-flight webhook tasks, and handles termination signals.
     """
 
-    def __init__(self, max_workers: int = 10, exit_fn: Callable[[int], None] = sys.exit) -> None:
+    def __init__(self, max_workers: int = 10, max_queue_depth: int = 20, exit_fn: Callable[[int], None] = sys.exit) -> None:
         self.is_shutting_down = False
+        self.max_workers = max_workers
+        self.max_queue_depth = max_queue_depth
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="webhook_worker",
@@ -38,11 +40,20 @@ class ShutdownManager:
     def submit_task(self, fn: Callable[..., None], *args: Any, **kwargs: Any) -> concurrent.futures.Future | None:
         """
         Submit a task for background execution. If shutdown is in progress,
-        the task is rejected and None is returned.
+        or the executor is full (capacity limit reached), the task is rejected
+        and None is returned.
         """
         with self._lock:
             if self.is_shutting_down:
                 logger.warning("Rejecting background task: shutdown in progress.")
+                return None
+
+            if len(self._futures) >= self.max_workers + self.max_queue_depth:
+                logger.warning(
+                    "Rejecting background task: thread pool is at capacity (max_workers=%d, max_queue_depth=%d).",
+                    self.max_workers,
+                    self.max_queue_depth,
+                )
                 return None
 
             future = self._executor.submit(fn, *args, **kwargs)

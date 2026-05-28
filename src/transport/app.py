@@ -2,7 +2,7 @@
 import logging
 import os
 from flask import Flask
-from src.config import DATA_PATH
+from src.config import DATA_PATH, CONCURRENT_WORKERS, MAX_QUEUE_DEPTH
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.infrastructure.channels.whatsapp_client import WhatsAppClient
 from src.infrastructure.channels.instagram_client import InstagramClient
@@ -32,7 +32,10 @@ def create_app() -> Flask:
 
     app = Flask(__name__)
     # Infrastructure
-    shutdown_mgr = ShutdownManager()
+    shutdown_mgr = ShutdownManager(
+        max_workers=CONCURRENT_WORKERS,
+        max_queue_depth=MAX_QUEUE_DEPTH,
+    )
     memory = SqliteMemoryAdapter()
     wa_client = WhatsAppClient()
     ig_client = InstagramClient()

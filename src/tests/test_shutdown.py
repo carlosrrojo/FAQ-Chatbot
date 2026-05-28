@@ -143,3 +143,60 @@ def test_webhook_drain_on_shutdown():
         print("[DEBUG] test_webhook_drain_on_shutdown cleanup")
         manager.initiate_shutdown()
     print("[DEBUG] test_webhook_drain_on_shutdown finished")
+
+
+def test_shutdown_manager_capacity_limit():
+    """Verify that submit_task rejects tasks when max capacity is reached."""
+    import threading
+    # Setup manager with 1 worker and 1 queue depth (capacity = 2)
+    manager = ShutdownManager(max_workers=1, max_queue_depth=1, exit_fn=MagicMock())
+    
+    # We submit a long-running task to block the worker
+    blocked = threading.Event()
+    release = threading.Event()
+    
+    def worker_task():
+        blocked.set()
+        release.wait()
+        
+    try:
+        # Task 1: goes to active execution (running)
+        f1 = manager.submit_task(worker_task)
+        assert f1 is not None
+        
+        # Wait until task 1 has actually started running
+        assert blocked.wait(timeout=2.0)
+        
+        # Task 2: goes to queue
+        f2 = manager.submit_task(lambda: None)
+        assert f2 is not None
+        
+        # Task 3: should be rejected because capacity (1 + 1 = 2) is reached
+        f3 = manager.submit_task(lambda: None)
+        assert f3 is None
+        
+        # Release the worker to let Task 1 & 2 finish
+        release.set()
+        f1.result(timeout=2.0)
+        f2.result(timeout=2.0)
+    finally:
+        release.set()
+        manager.initiate_shutdown()
+
+
+def test_webhook_rejection_on_capacity():
+    """Verify that webhook controller returns 503 when the executor is full."""
+    app = Flask(__name__)
+    app.register_blueprint(webhook_bp)
+    
+    # Configure ShutdownManager to report capacity full by returning None from submit_task
+    manager = MagicMock()
+    manager.is_shutting_down = False
+    manager.submit_task.return_value = None
+    app.config["SHUTDOWN_MANAGER"] = manager
+    
+    client = app.test_client()
+    with patch("src.transport.webhook_controller._verify_signature", return_value=True):
+        response = client.post("/webhook", json={"object": "whatsapp_business_account"})
+        assert response.status_code == 503
+        assert response.json == {"error": "Service Temporarily Unavailable"}

@@ -68,6 +68,11 @@ SESSION_TTL_DAYS: int = 30     # FR-PRV-01: data retention policy
 RETENTION_CHECK_INTERVAL_HOURS: int = 24  # FR-PRV-01: purge cycle (hours)
 
 
+# ── Concurrency limits (NFR-SCAL-01) ──────────────────────────────────────────
+CONCURRENT_WORKERS: int = 10      # Max threads processing webhooks concurrently
+MAX_QUEUE_DEPTH: int = 20           # Max queued requests before rejecting with 503
+
+
 # ── Platform constraints ──────────────────────────────────────────────────────
 WHATSAPP_MAX_CHARS: int = 4096     # FR-CHN-06
 INSTAGRAM_MAX_CHARS: int = 1000    # Instagram DM practical limit
