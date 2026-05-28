@@ -82,3 +82,9 @@ DEDUP_MAX_SIZE: int = 10_000       # Max tracked message IDs before eviction
 # ── Backups ───────────────────────────────────────────────────────────────────
 BACKUP_DIR = os.getenv("BACKUP_DIR", "data/backups")
 BACKUP_RETENTION_DAYS = int(os.getenv("BACKUP_RETENTION_DAYS", "7"))
+
+# ── Security / Privacy evaluation (FR-EVL-02) ────────────────────────────────
+SECURITY_SCORE_MIN: int = 0           # ordinal scale lower bound
+SECURITY_SCORE_MAX: int = 2           # ordinal scale upper bound (clean pass)
+SECURITY_JUDGE_MODEL_OLLAMA: str = MODEL_NAME      # reuse the main LLM
+SECURITY_JUDGE_MODEL_GEMINI: str = "gemini-flash-latest"

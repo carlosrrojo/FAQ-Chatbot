@@ -1,6 +1,7 @@
 from sentence_transformers import CrossEncoder
 from langchain_core.documents import Document
 import logging
+from src.config import EMBEDDING_DEVICE
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +12,7 @@ _encoder: CrossEncoder | None = None
 def get_encoder() -> CrossEncoder:
     global _encoder
     if _encoder is None:
-        _encoder = CrossEncoder(RERANK_MODEL)
+        _encoder = CrossEncoder(RERANK_MODEL, device=EMBEDDING_DEVICE)
     return _encoder
 
 def rerank(
