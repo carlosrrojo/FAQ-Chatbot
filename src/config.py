@@ -50,13 +50,13 @@ COLLECTION = get_active_collection_name()
 HYBRID_K = 20  # candidates fetched from each index (dense + sparse) before RRF
 RRF_K    = 60  # RRF smoothing constant (standard default)
 TOP_K    = 3   # documents returned by the cross-encoder reranker (final stage) to the LLM
-RELEVANCE_THRESHOLD: float = -5.0    # FR-AGT-04: cross-encoder OOS threshold
+RELEVANCE_THRESHOLD: float = -2.5291    # FR-AGT-04: cross-encoder OOS threshold (empirically calibrated on 2026-05-28)
 
 # ── Keyword augmentation ──────────────────────────────────────────────────────
 KEYWORD_AUGMENTATION_ENABLED: bool = False   # FR-RET-06: explicit off by default
 
 # ── Metadata filtering ────────────────────────────────────────────────────────
-FILTER_CONFIDENCE_THRESHOLD: float = 0.6     # Min fuzzy match score to apply section filter
+FILTER_CONFIDENCE_THRESHOLD: float = 0.00     # Min fuzzy match score to apply section filter (empirically calibrated on 2026-05-28)
 
 # ── Language handling ─────────────────────────────────────────────────────────
 TRANSLATE_CONTEXT_ENABLED: bool = False       # FR-AGT-02: translate retrieved docs to user language
