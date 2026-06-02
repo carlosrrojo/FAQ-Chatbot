@@ -119,5 +119,6 @@ class Classification:
     adapter and the orchestrator depend on *this*, not on each other."""
     category: Category
     sub_category: str | None
+    section: str
     language: str                 # ISO 639-1: "es", "en", "fr", "de"
     reasoning: str | None = None

@@ -395,7 +395,7 @@ def run_evaluator(collection: str = "Espazo Nature", evaluator: str = "ollama", 
 
         # ── Timed retrieval (AC-4 / NFR-PERF-02) ─────────────────────
         t_ret_start = time.perf_counter()
-        _, artifact = retrieve_documents.func(question)
+        _, artifact = retrieve_documents.func(question, config={"section": ""})
         retrieval_s = time.perf_counter() - t_ret_start
         retrieval_latencies.append(retrieval_s)
 
