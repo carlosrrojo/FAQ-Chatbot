@@ -1,10 +1,12 @@
 # src/domain/orchestrator.py - FR-AGT-01..04
+from src.domain.models import Category
+from src.domain.ports import IResponsePolicy
+from src.domain.ports import IClassifier
 import logging
 from langchain_core.messages import HumanMessage
 from src.domain.models import ChatRequest, ChatResponse
-from src.domain.ports import IMemoryStore
+from src.domain.ports import IMemoryStore, ISafetyGuard
 from src.telemetry import timed
-from src.rag.agent import build_graph
 
 logger = logging.getLogger(__name__)
 
@@ -45,30 +47,151 @@ class RAGOrchestrator:
     - Return ChatResponse
     """
 
-    def __init__(self, memory_store: IMemoryStore, system_prompt_template: str | None = None) -> None:
+    def __init__(
+        self,
+        memory_store: IMemoryStore,
+        classifier: IClassifier,
+        response_policy: IResponsePolicy,
+        system_prompt_template: str | None = None,
+        safety_guard: ISafetyGuard | None = None,
+        agent = None,
+    ) -> None:
         self._memory = memory_store
+        self._classifier = classifier
+        self._response_policy = response_policy
         self._system_prompt_template = system_prompt_template
-        self._agent = self._build_agent()
+        self._safety_guard = safety_guard
+        self._agent = agent
 
-    def _build_agent(self):
+    def _clean_query_text(self, text: str) -> str:
         """
-        Builds and compiles the LangGraph StateGraph.
-        This method consolidates the graph construction currently in agent.py.
+        Cleans user queries of structural placeholders and sensitive terms
+        before passing to the RAG agent retrieval, preventing out-of-scope
+        triggers and model reflection.
+
+        Strategy: split on sentence-level boundaries (`.` `;` `?` `!`) only,
+        preserving comma-separated clauses within a sentence.  Within each
+        sentence, remove placeholder tokens and sensitive keyword phrases
+        **inline** rather than dropping the entire sentence — this keeps
+        legitimate FAQ content that co-occurs with PII (e.g. dietary needs
+        mentioned alongside a social security number).
+
+        Only drop a sentence entirely if, after inline scrubbing, its
+        remaining text is purely whitespace / punctuation.
         """
-        if self._memory is None:
-            return build_graph(skip_memory=True, system_prompt_template=self._system_prompt_template)
-        return build_graph(
-            checkpointer=self._memory.get_checkpointer(),
-            system_prompt_template=self._system_prompt_template,
+        import re
+
+        placeholder_re = re.compile(r'\[[A-Z0-9_]+_REDACTED_\d+\]')
+
+        # Sensitive phrases to strip inline (order: longer first)
+        _sensitive_phrases = [
+            "número de la seguridad social", "numero de la seguridad social",
+            "número de afiliación", "numero de afiliacion",
+            "seguridad social", "social security",
+            "tarjeta de crédito", "tarjeta de credito",
+            "credit card", "credit-card",
+            "por si acaso",  # filler phrase often wrapping PII offers
+        ]
+
+        # Split on sentence-level separators, keeping the separator
+        parts = re.split(r'([.;?!]+)', text)
+
+        cleaned_sentences: list[str] = []
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            # If this element is just a separator, attach to previous
+            if re.match(r'^[.;?!]+$', part):
+                if cleaned_sentences:
+                    cleaned_sentences[-1] += part
+                i += 1
+                continue
+
+            # --- Inline scrubbing of the sentence fragment ---
+            sentence = part
+
+            # 1. Remove redaction placeholders
+            sentence = placeholder_re.sub('', sentence)
+
+            # 2. Remove sensitive keyword phrases (case-insensitive)
+            for phrase in _sensitive_phrases:
+                sentence = re.sub(
+                    re.escape(phrase), '', sentence, flags=re.IGNORECASE
+                )
+
+            # 3. Collapse whitespace and strip leading/trailing junk
+            sentence = re.sub(r'\s+', ' ', sentence).strip()
+            sentence = sentence.strip(" ,;:–—-")
+
+            # Keep the sentence only if substantive text remains
+            if sentence and not re.match(r'^[\s,;:.?!–—-]*$', sentence):
+                cleaned_sentences.append(sentence)
+
+            i += 1
+
+        cleaned_text = ' '.join(cleaned_sentences).strip()
+
+        # Final cleanup
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)
+        cleaned_text = re.sub(r'([.;,?!])\s*([.;,?!])+', r'\1', cleaned_text)
+        cleaned_text = cleaned_text.strip(" .;,?!")
+
+        # If everything was stripped, fall back to the original minus
+        # placeholders and keywords
+        if not cleaned_text:
+            fallback = placeholder_re.sub('', text)
+            for phrase in _sensitive_phrases:
+                fallback = re.sub(
+                    re.escape(phrase), '', fallback, flags=re.IGNORECASE
+                )
+            cleaned_text = re.sub(r'\s+', ' ', fallback).strip(" .;,?!")
+
+        return cleaned_text
+
+    def _run_agent(self, text: str, classification, sender_id: str) -> str:
+        config = {"configurable": {"thread_id": sender_id}}
+        cleaned_text = self._clean_query_text(text)
+        logger.info("Original sanitized query: '%s' -> Cleaned for RAG retrieval: '%s'", text, cleaned_text)
+        input_state = {"messages": [HumanMessage(content=cleaned_text)]}
+        result = self._agent.invoke(input_state, config=config)
+        return result["messages"][-1].content
+
+    def _oos_response(self, request: ChatRequest, lang: str) -> ChatResponse:
+        reply_text = _OOS_RESPONSES.get(lang, _OOS_RESPONSES["es"])
+        return ChatResponse(
+            text=reply_text,
+            sender_id=request.sender_id,
+            platform=request.platform,
         )
 
     @timed("orchestrator.generate_reply")
     def generate_reply(self, request: ChatRequest) -> ChatResponse:
-        config = {"configurable": {"thread_id": request.sender_id}}
-        input_state = {"messages": [HumanMessage(content=request.text)]}
+        mapping = {}
+        text = request.text
+        if self._safety_guard is not None:
+            try:
+                text, mapping = self._safety_guard.sanitize_inbound(text)
+            except Exception as e:
+                logger.error("Safety guard inbound sanitisation failed: %s", e)
+                #return self._oos_response(request, lang="es")
 
-        result = self._agent.invoke(input_state, config=config)
-        reply_text = result["messages"][-1].content
+        # Run explicit routing classification
+        classification = self._classifier.classify(text)
+        logger.info("Classification for '%s': %s", request.sender_id, classification)
+
+        if classification.category == Category.FAQ:
+            reply_text = self._run_agent(text, classification, request.sender_id)
+        else:
+            reply_text = self._response_policy.get_response(classification)
+
+        if self._safety_guard is not None:
+            try:
+                reply_text = self._safety_guard.screen_outbound(reply_text, mapping)
+            except Exception as e:
+                logger.error("Safety guard outbound screening failed: %s", e)
+                return self._oos_response(request, lang=classification.language)
+        
+        #self._safe_touch(request.sender_id)
 
         if self._memory is not None:
             try:

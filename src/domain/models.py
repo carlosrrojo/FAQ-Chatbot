@@ -96,3 +96,28 @@ class RetrievedContext:
     content:  str
     metadata: dict = field(default_factory=dict)
     score:    Optional[float] = None    # relevance / rerank score
+
+
+# ---------------------------------------------------------------------------
+# Query classification
+# ---------------------------------------------------------------------------
+
+class Category(str, Enum):
+    """Routing categories. (str, Enum) mixin keeps it 3.10-safe and
+    serialisation-friendly; finalise the membership against the classifier."""
+    FAQ             = "faq"
+    GREETING        = "greeting"
+    BOOKING_PAYMENT = "booking_payment"
+    PII_DISCLOSURE  = "pii_disclosure"
+    UNSUPPORTED     = "unsupported"
+    INJECTION       = "injection"
+    PRIVACY_RIGHTS  = "privacy_rights"
+
+@dataclass(frozen=True)
+class Classification:
+    """Result of routing an inbound message. Domain DTO; both the classifier
+    adapter and the orchestrator depend on *this*, not on each other."""
+    category: Category
+    sub_category: str | None
+    language: str                 # ISO 639-1: "es", "en", "fr", "de"
+    reasoning: str | None = None

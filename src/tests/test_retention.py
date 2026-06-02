@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
+from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter, _hash_thread_id
 from src.infrastructure.retention_scheduler import RetentionScheduler
 
 
@@ -29,7 +29,7 @@ class TestSqliteMemoryAdapterRetention:
             rows = cursor.fetchall()
 
         assert len(rows) == 1
-        assert rows[0][0] == "thread_123"
+        assert rows[0][0] == _hash_thread_id("thread_123")
         # Check if timestamp is in ISO format
         try:
             datetime.datetime.fromisoformat(rows[0][1])
@@ -39,10 +39,11 @@ class TestSqliteMemoryAdapterRetention:
     def test_touch_session_updates_existing(self, temp_memory_store):
         adapter = temp_memory_store
         adapter.touch_session("thread_123")
+        hashed_id = _hash_thread_id("thread_123")
 
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT last_active_at FROM session_activity WHERE thread_id = 'thread_123'")
+            cursor.execute("SELECT last_active_at FROM session_activity WHERE thread_id = ?", (hashed_id,))
             first_time = cursor.fetchone()[0]
 
         # Ensure different timestamp by inserting directly or mocking datetime, or simply waiting/modifying
@@ -51,7 +52,7 @@ class TestSqliteMemoryAdapterRetention:
 
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT last_active_at FROM session_activity WHERE thread_id = 'thread_123'")
+            cursor.execute("SELECT last_active_at FROM session_activity WHERE thread_id = ?", (hashed_id,))
             second_time = cursor.fetchone()[0]
 
         # The rows count should still be 1
@@ -60,14 +61,16 @@ class TestSqliteMemoryAdapterRetention:
 
     def test_purge_deletes_expired_sessions(self, temp_memory_store):
         adapter = temp_memory_store
+        thread_old_hashed = _hash_thread_id("thread_old")
+        thread_new_hashed = _hash_thread_id("thread_new")
 
         # Add dummy rows to checkpoints and writes tables to verify cascaded deletes
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES ('thread_old', 'ckpt_1')")
-            cursor.execute("INSERT INTO writes (thread_id, checkpoint_id, task_id, idx, channel) VALUES ('thread_old', 'ckpt_1', 'task_1', 0, 'channel_1')")
-            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES ('thread_new', 'ckpt_2')")
-            cursor.execute("INSERT INTO writes (thread_id, checkpoint_id, task_id, idx, channel) VALUES ('thread_new', 'ckpt_2', 'task_2', 0, 'channel_2')")
+            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES (?, 'ckpt_1')", (thread_old_hashed,))
+            cursor.execute("INSERT INTO writes (thread_id, checkpoint_id, task_id, idx, channel) VALUES (?, 'ckpt_1', 'task_1', 0, 'channel_1')", (thread_old_hashed,))
+            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES (?, 'ckpt_2')", (thread_new_hashed,))
+            cursor.execute("INSERT INTO writes (thread_id, checkpoint_id, task_id, idx, channel) VALUES (?, 'ckpt_2', 'task_2', 0, 'channel_2')", (thread_new_hashed,))
             conn.commit()
 
         # Insert old and new activity records
@@ -76,8 +79,8 @@ class TestSqliteMemoryAdapterRetention:
         new_time = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=5)).isoformat()
 
         with sqlite3.connect(adapter._db_path) as conn:
-            conn.execute("INSERT INTO session_activity VALUES ('thread_old', ?)", (old_time,))
-            conn.execute("INSERT INTO session_activity VALUES ('thread_new', ?)", (new_time,))
+            conn.execute("INSERT INTO session_activity VALUES (?, ?)", (thread_old_hashed, old_time))
+            conn.execute("INSERT INTO session_activity VALUES (?, ?)", (thread_new_hashed, new_time))
             conn.commit()
 
         deleted = adapter.purge_expired_sessions(ttl_days=30)
@@ -92,21 +95,22 @@ class TestSqliteMemoryAdapterRetention:
             cursor.execute("SELECT thread_id FROM session_activity")
             activity = [r[0] for r in cursor.fetchall()]
 
-        assert checkpoints == ["thread_new"]
-        assert writes == ["thread_new"]
-        assert activity == ["thread_new"]
+        assert checkpoints == [thread_new_hashed]
+        assert writes == [thread_new_hashed]
+        assert activity == [thread_new_hashed]
 
     def test_purge_preserves_active_sessions(self, temp_memory_store):
         adapter = temp_memory_store
+        thread_active_hashed = _hash_thread_id("thread_active")
 
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES ('thread_active', 'ckpt_1')")
+            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES (?, 'ckpt_1')", (thread_active_hashed,))
             conn.commit()
 
         active_time = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=29)).isoformat()
         with sqlite3.connect(adapter._db_path) as conn:
-            conn.execute("INSERT INTO session_activity VALUES ('thread_active', ?)", (active_time,))
+            conn.execute("INSERT INTO session_activity VALUES (?, ?)", (thread_active_hashed, active_time))
             conn.commit()
 
         deleted = adapter.purge_expired_sessions(ttl_days=30)
@@ -115,15 +119,16 @@ class TestSqliteMemoryAdapterRetention:
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT thread_id FROM checkpoints")
-            assert cursor.fetchone()[0] == "thread_active"
+            assert cursor.fetchone()[0] == thread_active_hashed
 
     def test_delete_session_cleans_all_tables(self, temp_memory_store):
         adapter = temp_memory_store
+        hashed_id = _hash_thread_id("thread_to_delete")
 
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES ('thread_to_delete', 'ckpt_1')")
-            cursor.execute("INSERT INTO writes (thread_id, checkpoint_id, task_id, idx, channel) VALUES ('thread_to_delete', 'ckpt_1', 'task_1', 0, 'channel_1')")
+            cursor.execute("INSERT INTO checkpoints (thread_id, checkpoint_id) VALUES (?, 'ckpt_1')", (hashed_id,))
+            cursor.execute("INSERT INTO writes (thread_id, checkpoint_id, task_id, idx, channel) VALUES (?, 'ckpt_1', 'task_1', 0, 'channel_1')", (hashed_id,))
             conn.commit()
 
         adapter.touch_session("thread_to_delete")
@@ -133,11 +138,11 @@ class TestSqliteMemoryAdapterRetention:
 
         with sqlite3.connect(adapter._db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM checkpoints WHERE thread_id = 'thread_to_delete'")
+            cursor.execute("SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (hashed_id,))
             assert cursor.fetchone()[0] == 0
-            cursor.execute("SELECT COUNT(*) FROM writes WHERE thread_id = 'thread_to_delete'")
+            cursor.execute("SELECT COUNT(*) FROM writes WHERE thread_id = ?", (hashed_id,))
             assert cursor.fetchone()[0] == 0
-            cursor.execute("SELECT COUNT(*) FROM session_activity WHERE thread_id = 'thread_to_delete'")
+            cursor.execute("SELECT COUNT(*) FROM session_activity WHERE thread_id = ?", (hashed_id,))
             assert cursor.fetchone()[0] == 0
 
 

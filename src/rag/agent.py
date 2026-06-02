@@ -280,7 +280,7 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
     #logger.debug("Search filter: %s", search_filter)
     
     # Re-extract keywords to append to the query (improves both indexes)
-    sections = ",".join(str(s) for s in get_sections(_vectorstore))
+    """sections = ",".join(str(s) for s in get_sections(_vectorstore))
     system_prompt = _QUERY_METADATA_PROMPT.format(sections=sections)
     try:
         meta: QueryMetadata = _metadata_extractor.invoke([
@@ -290,7 +290,7 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         #if meta.keywords:
             #retrieval_query = retrieval_query + " " + " ".join(meta.keywords)
     except Exception:
-        logger.warning("Keyword augmentation failed; using original query.")
+        logger.warning("Keyword augmentation failed; using original query.")"""
 
     # 2. Hybrid retrieval: dense (Chroma) + sparse (BM25) → RRF
     #    Dense uses a "soft boost": fetch with AND without the filter,

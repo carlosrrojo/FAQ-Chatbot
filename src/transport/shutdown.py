@@ -61,6 +61,12 @@ class ShutdownManager:
 
         # Define cleanup closure to discard the future once done
         def _cleanup(f: concurrent.futures.Future) -> None:
+            try:
+                exc = f.exception()
+                if exc:
+                    logger.error("Background task failed with exception: %s", exc, exc_info=exc)
+            except Exception:
+                logger.exception("Error checking exception on background task future.")
             with self._lock:
                 self._futures.discard(f)
 

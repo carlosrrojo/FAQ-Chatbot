@@ -1,4 +1,7 @@
 # src/transport/app.py
+from src.infrastructure.security.policy_pack import PolicyPack
+from src.config import MODEL_NAME
+from src.infrastructure.security.classifier_adapter import LlmClassifier
 import logging
 import os
 from flask import Flask
@@ -6,13 +9,14 @@ from src.config import DATA_PATH, CONCURRENT_WORKERS, MAX_QUEUE_DEPTH, SYSTEM_PR
 from src.infrastructure.memory.sqlite_memory import SqliteMemoryAdapter
 from src.infrastructure.channels.whatsapp_client import WhatsAppClient
 from src.infrastructure.channels.instagram_client import InstagramClient
+from src.infrastructure.security.pii_redactor import PIISafetyGuard
 from src.infrastructure.deduplication import InMemoryDeduplicationStore
 from src.domain.orchestrator import RAGOrchestrator
 from src.transport.webhook_controller import webhook_bp
 from src.transport.health_controller import health_bp
 from src.infrastructure.retrieval.hybrid_retriever import HybridRetriever
 from src.rag.watcher import start_watcher
-from src.rag.agent import rebuild_bm25
+from src.rag.agent import rebuild_bm25, build_graph
 from src.infrastructure.retention_scheduler import RetentionScheduler
 from src.transport.shutdown import ShutdownManager
 from src.utils import load_prompt
@@ -32,23 +36,36 @@ def create_app() -> Flask:
     )
 
     app = Flask(__name__)
-    # Infrastructure
+    # Infrastructure adapters
     shutdown_mgr = ShutdownManager(
         max_workers=CONCURRENT_WORKERS,
         max_queue_depth=MAX_QUEUE_DEPTH,
     )
     memory = SqliteMemoryAdapter()
+    classifier = LlmClassifier()
+    response_policy = PolicyPack()
     wa_client = WhatsAppClient()
     ig_client = InstagramClient()
     dedup_store = InMemoryDeduplicationStore()
+    safety_guard = PIISafetyGuard()
 
     # Load system prompt template
     system_prompt = load_prompt(SYSTEM_PROMPT_PATH)
 
-    # Domain
+    # Build RAG Agent
+    agent = build_graph(
+        checkpointer=memory.get_checkpointer() if memory else None,
+        system_prompt_template=system_prompt,
+    )
+
+    # Domain wiring
     orchestrator = RAGOrchestrator(
         memory_store=memory,
         system_prompt_template=system_prompt,
+        classifier=classifier,
+        response_policy=response_policy,
+        safety_guard=safety_guard,
+        agent=agent,
     )
 
     # GDPR retention enforcement (FR-PRV-01)

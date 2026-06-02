@@ -1,7 +1,7 @@
 # src/domain/ports.py
 from abc import ABC, abstractmethod
 from typing import Optional
-from .models import ChatRequest, ChatResponse, RetrievedContext
+from .models import ChatRequest, ChatResponse, RetrievedContext, Classification
 
 
 class IRetriever(ABC):
@@ -63,3 +63,18 @@ class IDeduplicationStore(ABC):
     def is_duplicate(self, message_id: str) -> bool:
         """Return True if message_id was already processed; mark it as seen."""
         ...
+
+class ISafetyGuard(ABC):
+    @abstractmethod
+    def sanitize_inbound(self, text: str) -> tuple[str, dict[str, str]]: ...
+
+    @abstractmethod
+    def screen_outbound(self, text: str, mapping: dict[str, str]) -> str: ...
+
+class IClassifier(ABC):
+    @abstractmethod
+    def classify(self, text: str) -> Classification: ...
+
+class IResponsePolicy(ABC):
+    @abstractmethod
+    def get_response(self, classification: Classification) -> str: ...
