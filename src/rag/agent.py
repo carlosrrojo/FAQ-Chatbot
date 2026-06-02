@@ -257,7 +257,7 @@ def _translate_query_to_es(query: str, source_lang: str) -> str:
 # ---------------------------------------------------------------------------
 
 @tool(response_format="content_and_artifact")
-def retrieve_documents(query: str) -> tuple[str, list[Document]]:
+def retrieve_documents(query: str, config: RunnableConfig) -> tuple[str, list[Document]]:
     """
     Retrieve the most relevant documents for a query using a hybrid
     BM25 + dense-vector RRF pipeline followed by cross-encoder reranking.
@@ -276,7 +276,9 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         retrieval_query = _translate_query_to_es(query, lang_code)
 
     # 1. Derive metadata filter + augment query with extracted keywords
-    search_filter = _build_section_filter(retrieval_query)
+    #search_filter = _build_section_filter(retrieval_query)
+    configurable = config.get("configurable", {})
+    section = configurable.get("section")
     #logger.debug("Search filter: %s", search_filter)
     
     # Re-extract keywords to append to the query (improves both indexes)
@@ -303,6 +305,9 @@ def retrieve_documents(query: str) -> tuple[str, list[Document]]:
         )
 
         # --- Dense: filtered (section boost) ---
+        search_filter = None
+        if section:
+            search_filter = {"section": {"$eq": section}}
         if search_filter:
             filtered = _vectorstore.similarity_search_with_relevance_scores(
                 query=retrieval_query, k=HYBRID_K, filter=search_filter,

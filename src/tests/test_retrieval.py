@@ -38,7 +38,7 @@ def test_retrieval_smoke_pipeline(mock_rerank, mock_meta_extractor, mock_bm25, m
     # Mock rerank output
     mock_rerank.return_value = ([mock_doc], 0.9)
     
-    serialized, artifact = retrieve_documents.func(query="¿Qué es la cabaña?")
+    serialized, artifact = retrieve_documents.func(query="¿Qué es la cabaña?", config={"section": "cabanas"})
     docs = artifact["docs"]
     
     assert len(docs) == 1

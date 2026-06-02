@@ -149,7 +149,12 @@ class RAGOrchestrator:
         return cleaned_text
 
     def _run_agent(self, text: str, classification, sender_id: str) -> str:
-        config = {"configurable": {"thread_id": sender_id}}
+        config = {
+            "configurable": {
+                "thread_id": sender_id,
+                "section": classification.section
+            }
+        }
         cleaned_text = self._clean_query_text(text)
         logger.info("Original sanitized query: '%s' -> Cleaned for RAG retrieval: '%s'", text, cleaned_text)
         input_state = {"messages": [HumanMessage(content=cleaned_text)]}
