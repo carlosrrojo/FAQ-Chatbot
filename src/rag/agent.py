@@ -43,6 +43,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from src.telemetry import timed
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
@@ -257,6 +258,7 @@ def _translate_query_to_es(query: str, source_lang: str) -> str:
 # ---------------------------------------------------------------------------
 
 @tool(response_format="content_and_artifact")
+@timed("agent.retrieve_documents")
 def retrieve_documents(query: str, config: RunnableConfig) -> tuple[str, list[Document]]:
     """
     Retrieve the most relevant documents for a query using a hybrid
@@ -447,13 +449,14 @@ class ModelCaller:
 
 def _manage_memory(state: AgentState) -> dict:
     """
-    Enforces a sliding window of MAX_HISTORY_TURNS conversation turns.
-    If summarization is enabled, old messages are summarized by the LLM
-    into a single SystemMessage with id="conversation_summary" before deletion.
+    Active path memory node.
+    Performs quick synchronous safety hard truncation ONLY if message history
+    exceeds the safety limit to prevent token context overflow.
+    Otherwise, does nothing, leaving summarization to the background worker.
     """
-    messages = state["messages"]
+    messages = state.get("messages", [])
 
-    # 1. Identify any existing summary message and extract actual conversation messages
+    # Extract existing summary and conversation messages
     existing_summary_msg = None
     convo_msgs = []
     for m in messages:
@@ -462,27 +465,78 @@ def _manage_memory(state: AgentState) -> dict:
         else:
             convo_msgs.append(m)
 
-    max_messages = MAX_HISTORY_TURNS * 2  # pairs of (human, AI)
-    if len(convo_msgs) <= max_messages:
+    # Safety limit:
+    # If summarization is enabled, safety limit is MAX_HISTORY_TURNS * 4.
+    # If disabled, safety limit is MAX_HISTORY_TURNS * 2.
+    if CONVERSATION_SUMMARIZATION_ENABLED:
+        safety_limit = MAX_HISTORY_TURNS * 4
+    else:
+        safety_limit = MAX_HISTORY_TURNS * 2
+
+    if len(convo_msgs) <= safety_limit:
         return {"messages": []}
 
-    # 2. Split into messages to remove and messages to keep
-    # Snap the truncation boundary forwards to the next coherent HumanMessage,
-    # never severing a tool-call/tool-result pair.
+    # Hard truncate down to MAX_HISTORY_TURNS * 2
+    logger.warning("Active path: history size (%d) exceeds safety limit (%d). Hard-truncating.", 
+                   len(convo_msgs), safety_limit)
+    
+    cut_idx = len(convo_msgs) - (MAX_HISTORY_TURNS * 2)
+    while cut_idx < len(convo_msgs) and convo_msgs[cut_idx].__class__.__name__ != "HumanMessage":
+        cut_idx += 1
+    to_remove = convo_msgs[:cut_idx]
+
+    messages_to_remove = [RemoveMessage(id=m.id) for m in to_remove if m.id]
+    if existing_summary_msg and existing_summary_msg.id:
+        messages_to_remove.append(RemoveMessage(id=existing_summary_msg.id))
+    return {"messages": messages_to_remove}
+
+
+def summarize_history(agent, thread_id: str) -> None:
+    """
+    Background worker function that performs conversation summarization.
+    Retrieves the current message history from the agent's checkpointer state,
+    determines if the turns exceed MAX_HISTORY_TURNS * 2, generates a summary
+    of the older turns via the LLM, and updates the thread state.
+    """
+    if not CONVERSATION_SUMMARIZATION_ENABLED:
+        return
+
+    logger.debug("Background thread: Starting summarization check for thread: %s", thread_id)
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        state = agent.get_state(config)
+    except Exception as e:
+        logger.debug("Could not retrieve state for thread %s (perhaps checkpointer not configured?): %s", thread_id, e)
+        return
+
+    messages = state.values.get("messages", []) if state.values else []
+    if not messages:
+        return
+
+    # Extract existing summary and conversation messages
+    existing_summary_msg = None
+    convo_msgs = []
+    for m in messages:
+        if m.id == "conversation_summary" or (m.type == "system" and m.content.startswith("Resumen de la conversación anterior:")):
+            existing_summary_msg = m
+        else:
+            convo_msgs.append(m)
+
+    max_messages = MAX_HISTORY_TURNS * 2
+    if len(convo_msgs) <= max_messages:
+        logger.debug("Background thread: Thread %s messages (%d) under threshold (%d). No summary needed.", 
+                     thread_id, len(convo_msgs), max_messages)
+        return
+
+    # Split into messages to remove and messages to keep
     cut_idx = len(convo_msgs) - max_messages
     while cut_idx < len(convo_msgs) and convo_msgs[cut_idx].__class__.__name__ != "HumanMessage":
         cut_idx += 1
     to_remove = convo_msgs[:cut_idx]
 
-    # 3. If summarization is disabled, perform standard hard truncation
-    if not CONVERSATION_SUMMARIZATION_ENABLED:
-        logger.info("Summarization disabled; hard-truncating %d messages", len(to_remove))
-        messages_to_remove = [RemoveMessage(id=m.id) for m in to_remove if m.id]
-        if existing_summary_msg and existing_summary_msg.id:
-            messages_to_remove.append(RemoveMessage(id=existing_summary_msg.id))
-        return {"messages": messages_to_remove}
+    if not to_remove:
+        return
 
-    # 4. Perform hybrid summarization
     try:
         summary_prompt = (
             "Resume la siguiente conversación anterior de forma muy concisa (máximo 150 palabras), "
@@ -497,7 +551,7 @@ def _manage_memory(state: AgentState) -> dict:
             role = "Usuario" if m.type == "human" else "Asistente" if m.type == "ai" else m.type.capitalize()
             summary_prompt += f"{role}: {m.content}\n"
 
-        logger.info("Generating conversation summary for %d messages...", len(to_remove))
+        logger.info("Background thread: Generating conversation summary for %d messages...", len(to_remove))
         summary_response = _llm.invoke(summary_prompt)
         summary_text = summary_response.content.strip()
 
@@ -514,15 +568,11 @@ def _manage_memory(state: AgentState) -> dict:
                 messages_to_return.append(RemoveMessage(id=m.id))
         messages_to_return.append(new_summary_msg)
 
-        logger.info("Conversation summarization complete. Injected summary ID: 'conversation_summary'.")
-        return {"messages": messages_to_return}
-
+        logger.info("Background thread: Saving updated state for thread %s", thread_id)
+        agent.update_state(config, {"messages": messages_to_return}, as_node="manage_memory")
+        logger.info("Background thread: Summarization and state update completed successfully for thread %s.", thread_id)
     except Exception as e:
-        logger.error("Failed to generate conversation summary: %s. Falling back to hard truncation.", e)
-        messages_to_remove = [RemoveMessage(id=m.id) for m in to_remove if m.id]
-        if existing_summary_msg and existing_summary_msg.id:
-            messages_to_remove.append(RemoveMessage(id=existing_summary_msg.id))
-        return {"messages": messages_to_remove}
+        logger.error("Background thread: Failed to generate background conversation summary for thread %s: %s", thread_id, e)
 
 
 

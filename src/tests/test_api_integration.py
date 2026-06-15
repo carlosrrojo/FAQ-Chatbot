@@ -264,3 +264,45 @@ def test_duplicate_instagram_message_is_suppressed(client, app):
     mock_ig.send_reply.assert_not_called()
 
 
+@patch("src.transport.webhook_controller.threading.Thread", new=SyncThread)
+def test_whatsapp_mark_as_read_exception_handling(client, app):
+    """Verify that if wa_client.mark_as_read throws an exception, the message is still processed."""
+    mock_orch = app.config["ORCHESTRATOR"]
+    mock_wa = app.config["WA_CLIENT"]
+    
+    from src.domain.models import ChatResponse, Platform
+    mock_orch.generate_reply.return_value = ChatResponse(
+        text="Fallback working reply.",
+        sender_id="123456789",
+        platform=Platform.WHATSAPP
+    )
+    
+    # Force mark_as_read to throw an exception
+    mock_wa.mark_as_read.side_effect = Exception("API error during read receipt")
+    
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "messages": [{
+                        "id": "msg_err_read",
+                        "from": "123456789",
+                        "type": "text",
+                        "text": {"body": "Hello bot read receipt error"}
+                    }]
+                }
+            }]
+        }]
+    }
+
+    response = client.post("/webhook", json=payload)
+    assert response.status_code == 200
+    assert response.json == {"status": "accepted"}
+
+    # Even though mark_as_read failed, generate_reply and send_reply must be called!
+    mock_wa.mark_as_read.assert_called_once_with("msg_err_read")
+    mock_orch.generate_reply.assert_called_once()
+    mock_wa.send_reply.assert_called_once()
+
+

@@ -151,7 +151,10 @@ def _handle_whatsapp(data: dict, app) -> None:
                 return
 
             if message_id:
-                wa_client.mark_as_read(message_id)
+                try:
+                    wa_client.mark_as_read(message_id)
+                except Exception as e:
+                    logger.warning("Failed to mark message %s as read: %s", message_id, e, exc_info=True)
 
             response = orchestrator.generate_reply(chat_request)
             wa_client.send_reply(response)

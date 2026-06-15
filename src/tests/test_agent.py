@@ -140,8 +140,9 @@ def test_manage_memory_hard_truncation_snapping():
 
 
 @patch("src.rag.agent._llm")
-def test_manage_memory_summarization_snapping(mock_llm):
+def test_summarize_history_snapping(mock_llm):
     from langchain_core.messages import ToolMessage, SystemMessage
+    from src.rag.agent import summarize_history
     mock_llm.invoke.return_value = MagicMock(content="Summary of first turn.")
 
     # Setup test messages: 6 convo messages. MAX_HISTORY_TURNS = 2 (max_messages = 4)
@@ -154,12 +155,21 @@ def test_manage_memory_summarization_snapping(mock_llm):
         AIMessage(content="AI2 response", id="ai3"),
     ]
 
+    mock_agent = MagicMock()
+    mock_agent.get_state.return_value = MagicMock(values={"messages": messages})
+
     with patch("src.rag.agent.MAX_HISTORY_TURNS", 2), \
          patch("src.rag.agent.CONVERSATION_SUMMARIZATION_ENABLED", True):
-        result = _manage_memory({"messages": messages})
+        summarize_history(mock_agent, "thread-1")
 
-    # Expected: remove h1, ai1, t1, ai2, and add a summary SystemMessage
-    returned_messages = result["messages"]
+    mock_agent.get_state.assert_called_once_with({"configurable": {"thread_id": "thread-1"}})
+    mock_agent.update_state.assert_called_once()
+    
+    update_args = mock_agent.update_state.call_args
+    assert update_args[0][0] == {"configurable": {"thread_id": "thread-1"}}
+    assert update_args[1]["as_node"] == "manage_memory"
+    
+    returned_messages = update_args[0][1]["messages"]
     assert len(returned_messages) == 5  # 4 RemoveMessages + 1 SystemMessage (summary)
     
     remove_ids = [m.id for m in returned_messages if isinstance(m, RemoveMessage)]

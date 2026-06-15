@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 from src.domain.ports import IRetriever
 from src.domain.models import RetrievedContext
 from src.config import HYBRID_K, RRF_K, TOP_K, RELEVANCE_THRESHOLD, KEYWORD_AUGMENTATION_ENABLED
+from src.telemetry import timed
 from .bm25_retriever import BM25Retriever
 from .reranker import rerank
 
@@ -57,6 +58,7 @@ class HybridRetriever(IRetriever):
         """Delegate to BM25 adapter. Called by watcher after re-ingestion."""
         self._bm25.rebuild()
 
+    @timed("retriever.hybrid_retriever")
     def retrieve(self, query: str) -> list[RetrievedContext]:
         try:
             return self._retrieve_internal(query)

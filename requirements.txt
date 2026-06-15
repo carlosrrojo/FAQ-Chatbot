@@ -24,3 +24,5 @@ scikit-learn>=1.5.0
 langchain-google-genai>=1.0.0
 langchain-huggingface>=0.1.0
 sentence-transformers>=3.0.0
+spacy>=3.8.0
+https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl
